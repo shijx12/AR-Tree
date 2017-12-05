@@ -17,7 +17,8 @@ def apply_nd(fn, input):
     x_flat = input.view(-1, x_size[-1])
     output_flat = fn(x_flat)
     output_size = x_size[:-1] + (output_flat.size(-1),)
-    return output_flat.view(*output_size)
+    output_flat = output_flat.view(*output_size)
+    return output_flat
 
 
 def affine_nd(input, weight, bias):
@@ -87,13 +88,25 @@ def convert_to_one_hot(indices, num_classes):
 
 def masked_softmax(logits, mask=None):
     eps = 1e-20
-    probs = functional.softmax(logits)
+    probs = functional.softmax(logits, dim=1)
     if mask is not None:
         mask = mask.float()
         probs = probs * mask + eps
         probs = probs / probs.sum(1, keepdim=True)
     return probs
 
+def weighted_softmax(logits, base, weights_mask=None):
+    """
+    weights_mask maintains the length of corresponding intervals.
+    for example: regardless of the batch dimension, i-th logits corresponds an interval of length l, then its probability will multiply pow(base, l)
+    """
+    eps = 1e-20
+    probs = F.softmax(logits)
+    if weights_mask is not None:
+        mask = torch.pow(base, weights_mask.float())
+        probs = probs * mask + eps
+        probs = probs / probs.sum(1, keepdim=True)
+    return probs
 
 def greedy_select(logits, mask=None):
     probs = masked_softmax(logits=logits, mask=mask)
@@ -101,6 +114,11 @@ def greedy_select(logits, mask=None):
                                  num_classes=logits.size(1))
     return one_hot
 
+def weighted_greedy(logits, base, weights_mask=None):
+    probs = weighted_softmax(logits=logits, base=base, weights_mask=weights_mask)
+    one_hot = convert_to_one_hot(indices=probs.max(1)[1],
+                                 num_classes=logits.size(1))
+    return one_hot
 
 def st_gumbel_softmax(logits, temperature=1.0, mask=None):
     """

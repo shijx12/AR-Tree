@@ -36,7 +36,7 @@ class BinaryTreeLSTMLayer(nn.Module):
         hr, cr = r
         hlr_cat = torch.cat([hl, hr], dim=2)
         treelstm_vector = basic.apply_nd(fn=self.comp_linear, input=hlr_cat)
-        i, fl, fr, u, o = treelstm_vector.chunk(num_chunks=5, dim=2)
+        i, fl, fr, u, o = torch.chunk(treelstm_vector, chunks=5, dim=2)
         c = (cl*(fl + 1).sigmoid() + cr*(fr + 1).sigmoid()
              + u.tanh()*i.sigmoid())
         h = o.sigmoid() * c.tanh()

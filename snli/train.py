@@ -68,7 +68,7 @@ def train(args):
     elif args.optimizer == 'adadelta':
         optimizer_class = optim.Adadelta
     params = [p for p in model.parameters() if p.requires_grad]
-    optimizer = optimizer_class(params=params, weight_decay=args.l2reg)
+    optimizer = optimizer_class(params=params, lr=args.lr, weight_decay=args.l2reg)
     scheduler = lr_scheduler.ReduceLROnPlateau(
         optimizer=optimizer, mode='max', factor=0.5, patience=10, verbose=True)
     criterion = nn.CrossEntropyLoss()
@@ -163,29 +163,29 @@ def train(args):
 
 def main():
     parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
-    parser.add_argument('--train-data', required=True)
-    parser.add_argument('--valid-data', required=True)
-    parser.add_argument('--word-dim', required=True, type=int)
-    parser.add_argument('--hidden-dim', required=True, type=int)
-    parser.add_argument('--clf-hidden-dim', required=True, type=int)
-    parser.add_argument('--clf-num-layers', required=True, type=int)
-    parser.add_argument('--leaf-rnn', default=False, action='store_true')
+    parser.add_argument('--train-data', default='./data/snli_train.pickle')
+    parser.add_argument('--valid-data', default='./data/snli_dev.pickle')
+    parser.add_argument('--glove', default='/data/glove.840B/glove.840B.300d.txt')
+    parser.add_argument('--save-dir', required=True)
+    parser.add_argument('--gpu', default=0, type=int)
+
+    parser.add_argument('--word-dim', default=300, type=int)
+    parser.add_argument('--hidden-dim', default=300, type=int)
+    parser.add_argument('--clf-hidden-dim', default=1024, type=int)
+    parser.add_argument('--clf-num-layers', default=2, type=int)
+    parser.add_argument('--leaf-rnn', default=True, action='store_true')
     parser.add_argument('--bidirectional', default=False, action='store_true')
     parser.add_argument('--intra-attention', default=False, action='store_true')
-    parser.add_argument('--batchnorm', default=False, action='store_true')
-    parser.add_argument('--dropout', default=0.0, type=float)
+    parser.add_argument('--batchnorm', default=True, action='store_true')
+    parser.add_argument('--dropout', default=0.1, type=float)
     parser.add_argument('--anneal-temperature-every', default=1e10, type=int)
     parser.add_argument('--anneal-temperature-rate', default=0, type=float)
-    parser.add_argument('--glove', default=None)
-    parser.add_argument('--fix-word-embedding', default=False,
-                        action='store_true')
-    parser.add_argument('--gpu', default=-1, type=int)
-    parser.add_argument('--batch-size', required=True, type=int)
-    parser.add_argument('--max-epoch', required=True, type=int)
-    parser.add_argument('--save-dir', required=True)
-    parser.add_argument('--lr', default=None, type=float)
+    parser.add_argument('--fix-word-embedding', default=True, action='store_true')
+    parser.add_argument('--batch-size', default=128, type=int)
+    parser.add_argument('--max-epoch', default=20, type=int)
+    parser.add_argument('--lr', default=0.001, type=float)
     parser.add_argument('--optimizer', default='adam')
-    parser.add_argument('--l2reg', default=0, type=float)
+    parser.add_argument('--l2reg', default=1e-5, type=float)
     args = parser.parse_args()
     train(args)
 

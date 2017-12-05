@@ -1,3 +1,4 @@
+#! /usr/bin/env python3
 import argparse
 import pickle
 
@@ -8,9 +9,9 @@ from utils.vocab import Vocab
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', required=True)
-    parser.add_argument('--vocab', required=True)
-    parser.add_argument('--vocab-size', required=True, type=int)
-    parser.add_argument('--max-length', required=True, type=int)
+    parser.add_argument('--vocab', default='data/snli.vocab')
+    parser.add_argument('--vocab-size', type=int, default=50000)
+    parser.add_argument('--max-length', type=int, default=200)
     parser.add_argument('--lower', default=False, action='store_true')
     parser.add_argument('--out', required=True)
     args = parser.parse_args()

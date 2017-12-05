@@ -20,7 +20,7 @@ def collect_words(path, lower):
 def save_vocab(word_set, path):
     with open(path, 'w', encoding='utf-8') as f:
         for word in word_set:
-            f.write(f'{word}\n')
+            f.write('%s\n' % word)
 
 
 def main():
