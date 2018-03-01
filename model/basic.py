@@ -3,7 +3,9 @@ import torch
 from torch import nn
 from torch.autograd import Variable
 from torch.nn import functional
-
+import conf
+import numpy as np
+from IPython import embed
 
 def apply_nd(fn, input):
     """
@@ -95,32 +97,39 @@ def masked_softmax(logits, mask=None):
         probs = probs / probs.sum(1, keepdim=True)
     return probs
 
-def weighted_softmax(logits, base, weights_mask=None):
+def weighted_softmax(logits, base, mask=None, weights_mask=None):
     """
     weights_mask maintains the length of corresponding intervals.
     for example: regardless of the batch dimension, i-th logits corresponds an interval of length l, then its probability will multiply pow(base, l)
     """
     eps = 1e-20
-    probs = F.softmax(logits)
-    if weights_mask is not None:
-        mask = torch.pow(base, weights_mask.float())
-        probs = probs * mask + eps
+    probs = functional.softmax(logits, dim=1)
+    if weights_mask is not None and mask is not None:
+        weights = torch.pow(base, weights_mask.float())
+        probs = probs * mask.float() * weights + eps
         probs = probs / probs.sum(1, keepdim=True)
+    if conf.debug:
+        indices = probs.max(1)[1]
+        mask_length = mask.float().sum(1, keepdim=False)
+        for b in range(indices.size(0)):
+            if mask_length.data[b] > 0 and indices.data[b] >= mask_length.data[b]:
+                print('Select out of mask !')
+                embed()
+                break
     return probs
 
-def greedy_select(logits, mask=None):
-    probs = masked_softmax(logits=logits, mask=mask)
+def greedy_select(logits, mask=None, use_weight=False, weights=None, base=None):
+    if use_weight:
+        assert(weights is not None and mask is not None)
+        probs = weighted_softmax(logits=logits, base=base, mask=mask, weights_mask=weights)
+    else:
+        probs = masked_softmax(logits=logits, mask=mask)
     one_hot = convert_to_one_hot(indices=probs.max(1)[1],
                                  num_classes=logits.size(1))
     return one_hot
 
-def weighted_greedy(logits, base, weights_mask=None):
-    probs = weighted_softmax(logits=logits, base=base, weights_mask=weights_mask)
-    one_hot = convert_to_one_hot(indices=probs.max(1)[1],
-                                 num_classes=logits.size(1))
-    return one_hot
 
-def st_gumbel_softmax(logits, temperature=1.0, mask=None):
+def st_gumbel_softmax(logits, temperature=1.0, mask=None, use_weight=False, weights=None, base=None):
     """
     Return the result of Straight-Through Gumbel-Softmax Estimation.
     It approximates the discrete sampling via Gumbel-Softmax trick
@@ -137,16 +146,20 @@ def st_gumbel_softmax(logits, temperature=1.0, mask=None):
         mask (Variable, optional): If given, it masks the softmax
             so that indices of '0' mask values are not selected.
             The size is (batch_size, num_classes).
-
+        weights (Variable, optional) : Must have the same size with mask
     Returns:
         y: The sampled output, which has the property explained above.
     """
 
     eps = 1e-20
-    u = logits.data.new(*logits.size()).uniform_()
+    u = logits.data.new(*logits.size()).uniform_(0.001, 0.999)
     gumbel_noise = Variable(-torch.log(-torch.log(u + eps) + eps))
     y = logits + gumbel_noise
-    y = masked_softmax(logits=y / temperature, mask=mask)
+    if use_weight:
+        assert(weights is not None and mask is not None)
+        y = weighted_softmax(logits=y / temperature, base=base, mask=mask, weights_mask=weights)
+    else:
+        y = masked_softmax(logits=y / temperature, mask=mask)
     y_argmax = y.max(1)[1]
     y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(1)).float()
     y = (y_hard - y).detach() + y

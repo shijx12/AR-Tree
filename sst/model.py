@@ -2,6 +2,7 @@ from torch import nn
 from torch.nn import init
 
 from model.treelstm import BinaryTreeLSTM
+from model.att_tree import AttTreeLSTM
 
 
 class SSTClassifier(nn.Module):
@@ -61,7 +62,9 @@ class SSTModel(nn.Module):
 
     def __init__(self, num_classes, num_words, word_dim, hidden_dim,
                  clf_hidden_dim, clf_num_layers, use_leaf_rnn, bidirectional,
-                 intra_attention, use_batchnorm, dropout_prob):
+                 use_batchnorm, dropout_prob,
+                 weighted_by_interval_length, weighted_base, weighted_update,
+                 cell_type):
         super(SSTModel, self).__init__()
         self.num_classes = num_classes
         self.word_dim = word_dim
@@ -70,7 +73,6 @@ class SSTModel(nn.Module):
         self.clf_num_layers = clf_num_layers
         self.use_leaf_rnn = use_leaf_rnn
         self.bidirectional = bidirectional
-        self.intra_attention = intra_attention
         self.use_batchnorm = use_batchnorm
         self.dropout_prob = dropout_prob
 
@@ -79,11 +81,19 @@ class SSTModel(nn.Module):
                                            embedding_dim=word_dim)
         self.encoder = BinaryTreeLSTM(word_dim=word_dim, hidden_dim=hidden_dim,
                                       use_leaf_rnn=use_leaf_rnn,
-                                      intra_attention=intra_attention,
+                                      intra_attention=False,
                                       gumbel_temperature=1,
-                                      bidirectional=bidirectional)
+                                      bidirectional=bidirectional,
+                                      weighted_by_interval_length=weighted_by_interval_length,
+                                      weighted_base=weighted_base,
+                                      weighted_update=weighted_update,
+                                      cell_type=cell_type)
+        if bidirectional:
+            clf_input_dim = 2 * hidden_dim
+        else:
+            clf_input_dim = hidden_dim
         self.classifier = SSTClassifier(
-            num_classes=num_classes, input_dim=hidden_dim,
+            num_classes=num_classes, input_dim=clf_input_dim,
             hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
             use_batchnorm=use_batchnorm, dropout_prob=dropout_prob)
         self.reset_parameters()
@@ -93,9 +103,80 @@ class SSTModel(nn.Module):
         self.encoder.reset_parameters()
         self.classifier.reset_parameters()
 
-    def forward(self, words, length):
+    def forward(self, words, length, display=False):
         words_embed = self.word_embedding(words)
         words_embed = self.dropout(words_embed)
-        sentence_vector, _ = self.encoder(input=words_embed, length=length)
+        sentence_vector, _, select_masks = self.encoder(input=words_embed, length=length, return_select_masks=True)
         logits = self.classifier(sentence_vector)
-        return logits
+        supplements = {'select_masks': select_masks}
+        return logits, supplements
+
+
+class SSTAttModel(nn.Module):
+
+    def __init__(self, vocab, num_classes, num_words, word_dim, hidden_dim,
+                 clf_hidden_dim, clf_num_layers, use_leaf_rnn, bidirectional,
+                 use_batchnorm, dropout_prob, cell_type, att_type, 
+                 sample_num, rich_state, rank_init, rank_input, rank_detach, rank_tanh):
+        super(SSTAttModel, self).__init__()
+        self.num_classes = num_classes
+        self.word_dim = word_dim
+        self.hidden_dim = hidden_dim
+        self.clf_hidden_dim = clf_hidden_dim
+        self.clf_num_layers = clf_num_layers
+        self.use_leaf_rnn = use_leaf_rnn
+        self.bidirectional = bidirectional
+        self.use_batchnorm = use_batchnorm
+        self.dropout_prob = dropout_prob
+        self.att_type = att_type
+        self.sample_num = sample_num
+
+        self.dropout = nn.Dropout(dropout_prob)
+        self.word_embedding = nn.Embedding(num_embeddings=num_words,
+                                           embedding_dim=word_dim)
+        self.encoder =  AttTreeLSTM(vocab=vocab,
+                                    word_dim=word_dim, 
+                                    hidden_dim=hidden_dim,
+                                    use_leaf_rnn=use_leaf_rnn,
+                                    bidirectional=bidirectional,
+                                    cell_type=cell_type,
+                                    att_type=att_type,
+                                    sample_num=sample_num,
+                                    rich_state=rich_state,
+                                    rank_init=rank_init,
+                                    rank_input=rank_input,
+                                    rank_detach=rank_detach,
+                                    rank_tanh=rank_tanh)
+        if bidirectional:
+            clf_input_dim = 2 * hidden_dim
+        else:
+            clf_input_dim = hidden_dim
+        self.classifier = SSTClassifier(
+            num_classes=num_classes, input_dim=clf_input_dim,
+            hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
+            use_batchnorm=use_batchnorm, dropout_prob=dropout_prob)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.normal(self.word_embedding.weight.data, mean=0, std=0.01)
+        self.encoder.reset_parameters()
+        self.classifier.reset_parameters()
+
+    def forward(self, words, length, display=False):
+        words_embed = self.word_embedding(words)
+        words_embed = self.dropout(words_embed)
+        sentence_vector, _, trees, samples = self.encoder(
+                sentence_embedding=words_embed, 
+                sentence_word=words,
+                length=length, display=display)
+        logits = self.classifier(sentence_vector)
+        supplements = {'trees': trees}
+        ###########################
+        # samples prediction for REINFORCE
+        if self.att_type != 'corpus':
+            sample_logits = self.classifier(samples['h'])
+            supplements['sample_logits'] = sample_logits
+            supplements['probs'] = samples['probs']
+            supplements['sample_trees'] = samples['trees']
+            supplements['sample_h'] = samples['h']
+        return logits, supplements

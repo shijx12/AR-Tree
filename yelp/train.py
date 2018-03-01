@@ -26,22 +26,21 @@ from IPython import embed
 
 
 def train(args):
+    if args.cell_type == 'P2K' or args.cell_type == 'Tri':
+        assert args.model_type == 'att' and args.att_type == 'corpus', 'wrong cell_type'
+    else:
+        assert args.model_type == 'binary', 'wrong cell_type'
+
     with open(args.train_data, 'rb') as f:
         train_dataset: SNLIDataset = pickle.load(f)
     with open(args.valid_data, 'rb') as f:
         valid_dataset: SNLIDataset = pickle.load(f)
-    with open(args.test_data, 'rb') as f:
-        test_dataset: SNLIDataset = pickle.load(f)
 
     train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch_size,
                               shuffle=True, num_workers=2,
                               collate_fn=train_dataset.collate,
                               pin_memory=True)
     valid_loader = DataLoader(dataset=valid_dataset, batch_size=args.batch_size,
-                              shuffle=False, num_workers=2,
-                              collate_fn=valid_dataset.collate,
-                              pin_memory=True)
-    test_loader = DataLoader(dataset=test_dataset, batch_size=args.batch_size,
                               shuffle=False, num_workers=2,
                               collate_fn=valid_dataset.collate,
                               pin_memory=True)
@@ -103,7 +102,9 @@ def train(args):
         optimizer_class = optim.Adadelta
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = optimizer_class(params=params, lr=args.lr, weight_decay=args.l2reg)
-    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='max', factor=0.5, patience=10, verbose=True)
+    #scheduler = lr_scheduler.ReduceLROnPlateau(
+    #    optimizer=optimizer, mode='max', factor=0.1, patience=5, verbose=True)
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=args.lrd_every_epoch)
     criterion = nn.CrossEntropyLoss()
 
 
@@ -140,21 +141,19 @@ def train(args):
                 pre_select_masks, hyp_select_masks = supplements['pre_select_masks'], supplements['hyp_select_masks']
                 label_pred = logits.max(1)[1]
                 accuracy = torch.eq(label, label_pred).float().mean()
-                num_correct = torch.eq(label, label_pred).long().sum()
                 loss = criterion(input=logits, target=label)
                 depth_cumsum_1, word_cumsum_1 = parse_tree_avg_depth(pre_length, pre_select_masks)
                 depth_cumsum_2, word_cumsum_2 = parse_tree_avg_depth(hyp_length, hyp_select_masks)
-                return num_correct, (depth_cumsum_1+depth_cumsum_2), (word_cumsum_1+word_cumsum_2)
+                return loss, accuracy, (depth_cumsum_1+depth_cumsum_2), (word_cumsum_1+word_cumsum_2)
             elif args.model_type == 'att':
                 logits, supplements = model(pre=pre, pre_length=pre_length, hyp=hyp, hyp_length=hyp_length, display=True)
                 pre_tree, hyp_tree = supplements['pre_tree'], supplements['hyp_tree']
                 label_pred = logits.max(1)[1]
                 accuracy = torch.eq(label, label_pred).float().mean()
-                num_correct = torch.eq(label, label_pred).long().sum()
                 wrong_mask = torch.ne(label, label_pred).data.cpu().numpy()
                 wrong_tree_pairs = [(pre_tree[i], hyp_tree[i]) for i in range(wrong_mask.shape[0]) if wrong_mask[i]==1]
                 loss = criterion(input=logits, target=label)
-                return num_correct, pre_tree, hyp_tree, wrong_tree_pairs
+                return loss, accuracy, pre_tree, hyp_tree, wrong_tree_pairs
 
     num_train_batches = len(train_loader)
     validate_every = num_train_batches // 10
@@ -175,25 +174,30 @@ def train(args):
                 name='accuracy', value=train_accuracy, step=iter_count)
 
             if (batch_iter + 1) % validate_every == 0:
-                valid_accuracy_sum = depth_cumsum = word_cumsum = 0
+                valid_loss_sum = valid_accuracy_sum = depth_cumsum = word_cumsum = 0
+                num_valid_batches = len(valid_loader)
                 # Validation phase should be based on model_type !
                 if args.model_type == 'binary':
                     for valid_batch in valid_loader:
-                        valid_correct, depth_cumsum_, word_cumsum_ = run_iter(
+                        valid_loss, valid_accuracy, depth_cumsum_, word_cumsum_ = run_iter(
                             batch=valid_batch, is_training=False)
-                        valid_accuracy_sum += unwrap_scalar_variable(valid_correct)
+                        valid_loss_sum += unwrap_scalar_variable(valid_loss)
+                        valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
                         depth_cumsum += depth_cumsum_
                         word_cumsum += word_cumsum_
-                    valid_accuracy = valid_accuracy_sum / len(valid_dataset) 
+                    valid_loss = valid_loss_sum / num_valid_batches
+                    valid_accuracy = valid_accuracy_sum / num_valid_batches
                     valid_depth = depth_cumsum / word_cumsum
                 elif args.model_type == 'att':
                     wrong_tree_pairs = []
                     for valid_batch in valid_loader:
-                        valid_correct, pre_tree, hyp_tree, _wrong_tree_pairs = run_iter(
+                        valid_loss, valid_accuracy, pre_tree, hyp_tree, _wrong_tree_pairs = run_iter(
                             batch=valid_batch, is_training=False)
-                        valid_accuracy_sum += unwrap_scalar_variable(valid_correct)
+                        valid_loss_sum += unwrap_scalar_variable(valid_loss)
+                        valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
                         wrong_tree_pairs += _wrong_tree_pairs
-                    valid_accuracy = valid_accuracy_sum / len(valid_dataset) 
+                    valid_loss = valid_loss_sum / num_valid_batches
+                    valid_accuracy = valid_accuracy_sum / num_valid_batches
                     valid_depth = -1
                     # print some sample trees
                     logging.info(' ***** sample wrong tree pairs ***** ')
@@ -201,32 +205,32 @@ def train(args):
                     for p, h in wrong_tree_pairs[:10]:
                         display += '%s\n%s\n-----\n' % (p, h)
                     logging.info(display + ' ***********************  ')
-                scheduler.step(valid_accuracy)
+                #scheduler.step(valid_accuracy)
+                scheduler.step()
+                add_scalar_summary(
+                    summary_writer=valid_summary_writer,
+                    name='loss', value=valid_loss, step=iter_count)
                 add_scalar_summary(
                     summary_writer=valid_summary_writer,
                     name='accuracy', value=valid_accuracy, step=iter_count)
                 progress = epoch_num + batch_iter/num_train_batches
                 logging.info(f'Epoch {progress:.2f}: '
+                             f'valid loss = {valid_loss:.4f}, '
                              f'valid accuracy = {valid_accuracy:.4f}, '
                              f'depth = {valid_depth:.2f}')
                 if args.model_type == 'binary' and args.weighted_update:
                     logging.info(f'weighted_base: {model.encoder.weighted_base.data[0]:.4f}')
                 if valid_accuracy > best_vaild_accuacy:
-                    #############################
-                    # test performance
-                    test_accuracy_sum = 0
-                    for test_batch in test_loader:
-                        test_correct, _, _ = run_iter(batch=test_batch, is_training=False)
-                        test_accuracy_sum += unwrap_scalar_variable(test_correct)
-                    test_accuracy = test_accuracy_sum / len(test_dataset)
-                    ############################
+                    if model_path: # only preserve the best one
+                        os.remove(model_path)
                     best_vaild_accuacy = valid_accuracy
                     model_filename = (f'model-{progress:.2f}'
-                            f'-{valid_accuracy:.4f}'
-                            f'-{test_accuracy:.4f}.pkl')
+                                      f'-{valid_loss:.4f}'
+                                      f'-{valid_accuracy:.4f}'
+                                      f'-{valid_depth:.2f}.pkl')
                     model_path = os.path.join(args.save_dir, model_filename)
+                    print(f'Save the new best model to {model_path}')
                     torch.save(model.state_dict(), model_path)
-                    print(f'Saved the new best model to {model_path}')
     # log all wrong predictions
     if args.model_type == 'att':
         logging.info(' ***** all wrong tree pairs in validation set ***** ')
@@ -243,18 +247,12 @@ def train_withsampleRL(args):
         train_dataset: SNLIDataset = pickle.load(f)
     with open(args.valid_data, 'rb') as f:
         valid_dataset: SNLIDataset = pickle.load(f)
-    with open(args.test_data, 'rb') as f:
-        test_dataset: SNLIDataset = pickle.load(f)
 
     train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch_size,
                               shuffle=True, num_workers=2,
                               collate_fn=train_dataset.collate,
                               pin_memory=True)
     valid_loader = DataLoader(dataset=valid_dataset, batch_size=args.batch_size,
-                              shuffle=False, num_workers=2,
-                              collate_fn=valid_dataset.collate,
-                              pin_memory=True)
-    test_loader = DataLoader(dataset=test_dataset, batch_size=args.batch_size,
                               shuffle=False, num_workers=2,
                               collate_fn=valid_dataset.collate,
                               pin_memory=True)
@@ -279,11 +277,7 @@ def train_withsampleRL(args):
                       cell_type=args.cell_type,
                       att_type=args.att_type,
                       sample_num=args.sample_num,
-                      rich_state=args.rich_state,
-                      rank_init=args.rank_init,
-                      rank_input=args.rank_input,
-                      rank_detach=(args.rank_detach==1),
-                      rank_tanh=args.rank_tanh)
+                      rich_state=args.rich_state)
     logging.info(model)
     if args.glove:
         logging.info('Loading GloVe pretrained vectors...')
@@ -306,8 +300,7 @@ def train_withsampleRL(args):
         optimizer_class = optim.Adadelta
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = optimizer_class(params=params, lr=args.lr, weight_decay=args.l2reg)
-    scheduler = lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, mode='max', factor=0.5, patience=10, verbose=True)   
-    
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=10, gamma=args.lrd_every_epoch)
     criterion = nn.CrossEntropyLoss()
 
 
@@ -330,7 +323,7 @@ def train_withsampleRL(args):
                                    gpu=args.gpu)
         if is_training:
             logits, supplements = model(pre=pre, pre_length=pre_length, hyp=hyp, hyp_length=hyp_length)
-            sample_logits, pre_probs, hyp_probs, hyp_sample_trees = supplements['sample_logits'], supplements['pre_probs'], supplements['hyp_probs'], supplements['hyp_sample_trees']
+            sample_logits, pre_probs, hyp_probs = supplements['sample_logits'], supplements['pre_probs'], supplements['hyp_probs']
             #######################
             # supervise training for greedy tree structure, one tree per sentence
             label_pred = logits.max(1)[1]
@@ -341,8 +334,15 @@ def train_withsampleRL(args):
             sample_label_pred = sample_logits.max(1)[1]
             sample_label_gt = label.unsqueeze(1).expand(-1, args.sample_num).contiguous().view(-1)
             # expand gt for args.sample_num times, because each sentence has sample_num samples
-            rl_rewards = torch.eq(sample_label_gt, sample_label_pred).float().detach() * 2 - 1
+            rl_rewards = torch.gather(
+                    softmax(sample_logits, dim=1), 
+                    dim=1, 
+                    index=sample_label_gt.unsqueeze(1)
+                ).float().squeeze(1).detach() * 2 - 1
             rl_loss = 0
+            
+            
+            
             
             # average of word
             final_probs = defaultdict(list)
@@ -366,49 +366,16 @@ def train_withsampleRL(args):
             total_loss.backward()
             clip_grad_norm(parameters=params, max_norm=5)
             optimizer.step()
-
-            if conf.debug:
-                sample_num = args.sample_num
-                info = ''
-                info += '\n ############################################################################ \n'
-                p = softmax(logits, dim=1)
-                scores = model.encoder.scores
-                sample_p = softmax(sample_logits, dim=1)
-                logits, new_supplements = model(pre=pre, pre_length=pre_length, hyp=hyp, hyp_length=hyp_length, display=True)
-                new_p = softmax(logits, dim=1)
-                new_scores = model.encoder.scores
-                for i in range(7):
-                    info += ', '.join(map(lambda x: f'{x:.2f}', list(scores[i].squeeze().data)))+'\n'
-                    info += '%s\t%.2f, %.2f, %.2f\t%d\n' % (supplements['hyp_tree'][i], unwrap_scalar_variable(p[i][0]), unwrap_scalar_variable(p[i][1]), unwrap_scalar_variable(p[i][2]), unwrap_scalar_variable(label[i]))
-                    for j in range(i*sample_num, (i+1)*sample_num):
-                        info += '%s\t%.2f, %.2f, %.2f\t%.2f\t%d\n' % (hyp_sample_trees[j], unwrap_scalar_variable(sample_p[j][0]), unwrap_scalar_variable(sample_p[j][1]), unwrap_scalar_variable(sample_p[j][2]), unwrap_scalar_variable(rl_rewards[j]), unwrap_scalar_variable(sample_label_gt[j]))
-                    info += '%s\t%.2f, %.2f, %.2f\t%d\n' % (new_supplements['hyp_tree'][i], unwrap_scalar_variable(new_p[i][0]), unwrap_scalar_variable(new_p[i][1]), unwrap_scalar_variable(new_p[i][2]), unwrap_scalar_variable(label[i]))
-                    info += ', '.join(map(lambda x: f'{x:.2f}', list(new_scores[i].squeeze().data)))+'\n'
-                    info += ' -------------------------------------------- \n'
-                info += ' >>>\n >>>\n'
-                wrong_mask = torch.ne(label, label_pred).data.cpu().numpy()
-                wrong_i = [i for i in range(wrong_mask.shape[0]) if wrong_mask[i]==1]
-                for i in wrong_i[:3]:
-                    info += ', '.join(map(lambda x: f'{x:.2f}', list(scores[i].squeeze().data)))+'\n'
-                    info += '%s\t%.2f, %.2f, %.2f\t%d\n' % (supplements['hyp_tree'][i], unwrap_scalar_variable(p[i][0]), unwrap_scalar_variable(p[i][1]), unwrap_scalar_variable(p[i][2]), unwrap_scalar_variable(label[i]))
-                    for j in range(i*sample_num, (i+1)*sample_num):
-                        info += '%s\t%.2f, %.2f, %.2f\t%.2f\t%d\n' % (hyp_sample_trees[j], unwrap_scalar_variable(sample_p[j][0]), unwrap_scalar_variable(sample_p[j][1]), unwrap_scalar_variable(sample_p[j][2]), unwrap_scalar_variable(rl_rewards[j]), unwrap_scalar_variable(sample_label_gt[j]))
-                    info += '%s\t%.2f, %.2f, %.2f\t%d\n' % (new_supplements['hyp_tree'][i], unwrap_scalar_variable(new_p[i][0]), unwrap_scalar_variable(new_p[i][1]), unwrap_scalar_variable(new_p[i][2]), unwrap_scalar_variable(label[i]))
-                    info += ', '.join(map(lambda x: f'{x:.2f}', list(new_scores[i].squeeze().data)))+'\n'
-                    info += ' -------------------------------------------- \n'
-                logging.info(info)
-
             return sv_loss, rl_loss, sv_accuracy
         else:
             logits, supplements = model(pre=pre, pre_length=pre_length, hyp=hyp, hyp_length=hyp_length, display=True)
             pre_tree, hyp_tree, sample_logits = supplements['pre_tree'], supplements['hyp_tree'], supplements['sample_logits']
             label_pred = logits.max(1)[1]
             accuracy = torch.eq(label, label_pred).float().mean()
-            num_correct = torch.eq(label, label_pred).long().sum()
             wrong_mask = torch.ne(label, label_pred).data.cpu().numpy()
             wrong_tree_pairs = [(pre_tree[i], hyp_tree[i]) for i in range(wrong_mask.shape[0]) if wrong_mask[i]==1]
             loss = criterion(input=logits, target=label)
-            return num_correct, pre_tree, hyp_tree, wrong_tree_pairs
+            return loss, accuracy, pre_tree, hyp_tree, wrong_tree_pairs
 
     num_train_batches = len(train_loader)
     validate_every = num_train_batches // 10
@@ -435,14 +402,6 @@ def train_withsampleRL(args):
             add_scalar_summary(
                 summary_writer=train_summary_writer,
                 name='accuracy', value=train_accuracy, step=iter_count)
-            for name, p in model.named_parameters():
-                if p.requires_grad and p.grad is not None and 'rank' in name:
-                    add_histo_summary(
-                        summary_writer=train_summary_writer,
-                        name='value/'+name, value=p, step=iter_count)
-                    add_histo_summary(
-                        summary_writer=train_summary_writer,
-                        name='grad/'+name, value=p.grad, step=iter_count)
             ###############
 
             if (batch_iter + 1) % (num_train_batches // 100) == 0:
@@ -453,23 +412,27 @@ def train_withsampleRL(args):
             ###############
             # validate and logging
             if (batch_iter + 1) % validate_every == 0:
-                valid_accuracy_sum = 0
+                valid_loss_sum = valid_accuracy_sum = 0
+                num_valid_batches = len(valid_loader)
                 ###############################
                 wrong_tree_pairs = []
                 for valid_batch in valid_loader:
-                    valid_correct, pre_tree, hyp_tree, _wrong_tree_pairs = run_iter(
+                    valid_loss, valid_accuracy, pre_tree, hyp_tree, _wrong_tree_pairs = run_iter(
                         batch=valid_batch, is_training=False)
-                    valid_accuracy_sum += unwrap_scalar_variable(valid_correct)
+                    valid_loss_sum += unwrap_scalar_variable(valid_loss)
+                    valid_accuracy_sum += unwrap_scalar_variable(valid_accuracy)
                     wrong_tree_pairs += _wrong_tree_pairs
-                valid_accuracy = valid_accuracy_sum / len(valid_dataset) 
+                valid_loss = valid_loss_sum / num_valid_batches
+                valid_accuracy = valid_accuracy_sum / num_valid_batches
                 # print some sample trees
-                '''logging.info(' ***** sample wrong tree pairs ***** ')
+                logging.info(' ***** sample wrong tree pairs ***** ')
                 display = '\n'
                 for p, h in wrong_tree_pairs[:5]:
                     display += '%s\n%s\n-----\n' % (p, h)
-                logging.info(display + ' ***********************  ')'''
+                logging.info(display + ' ***********************  ')
+                ##
                 
-                scheduler.step(valid_accuracy)
+                scheduler.step()
                 add_scalar_summary(
                     summary_writer=valid_summary_writer,
                     name='accuracy', value=valid_accuracy, step=iter_count)
@@ -477,21 +440,12 @@ def train_withsampleRL(args):
                 logging.info(f'Epoch {progress:.2f}: '
                              f'valid accuracy = {valid_accuracy:.4f}, ')
                 if valid_accuracy > best_vaild_accuacy:
-                    #############################
-                    # test performance
-                    test_accuracy_sum = 0
-                    for test_batch in test_loader:
-                        test_correct, _, _, _ = run_iter(batch=test_batch, is_training=False)
-                        test_accuracy_sum += unwrap_scalar_variable(test_correct)
-                    test_accuracy = test_accuracy_sum / len(test_dataset)
-                    ############################
                     best_vaild_accuacy = valid_accuracy
                     model_filename = (f'model-{progress:.2f}'
-                            f'-{valid_accuracy:.4f}'
-                            f'-{test_accuracy:.4f}.pkl')
+                                      f'-{valid_accuracy:.4f}.pkl')
                     model_path = os.path.join(args.save_dir, model_filename)
                     torch.save(model.state_dict(), model_path)
-                    print(f'Saved the new best model to {model_path}')
+                    print(f'Save the new best model to {model_path}')
     # log all wrong predictions
     logging.info(' ***** all wrong tree pairs in validation set ***** ')
     display = '\n'
@@ -505,19 +459,13 @@ def main():
     parser = argparse.ArgumentParser(fromfile_prefix_chars='@')
     parser.add_argument('--train-data', default='./data/snli_train.pickle')
     parser.add_argument('--valid-data', default='./data/snli_dev.pickle')
-    parser.add_argument('--test-data', default='./data/snli_test.pickle')
     parser.add_argument('--glove', default='/data/share/glove.840B/glove.840B.300d.txt')
     parser.add_argument('--save-dir', required=True)
     parser.add_argument('--gpu', default=0, type=int)
-    parser.add_argument('--cell_type', default='treelstm', choices=['treelstm', 'Nary', 'TriPad'])
+    parser.add_argument('--cell_type', default='treelstm', choices=['treelstm', 'simple', 'P2K', 'Tri', 'TriPad'])
     parser.add_argument('--model_type', default='binary', choices=['binary', 'att'])
     parser.add_argument('--att_type', default='corpus', choices=['corpus', 'rank0', 'rank1', 'rank2'], help='Used only when model_type==att')
-    parser.add_argument('--sample_num', default=2, type=int)
-    parser.add_argument('--rich-state', default=False, action='store_true')
-    parser.add_argument('--rank_init', default='kaiming', choices=['normal', 'kaiming'])
-    parser.add_argument('--rank_input', default='word', choices=['word', 'h'])
-    parser.add_argument('--rank_detach', default=1, choices=[0, 1], type=int, help='1 means detach, 0 means no detach')
-    parser.add_argument('--rank_tanh', action='store_true')
+    parser.add_argument('--sample_num', default=1, type=int)
     
     
     parser.add_argument('--rl_weight', default=0.1, type=float)
@@ -526,16 +474,18 @@ def main():
     parser.add_argument('--word-dim', default=300, type=int)
     parser.add_argument('--hidden-dim', default=300, type=int)
     parser.add_argument('--clf-hidden-dim', default=1024, type=int)
-    parser.add_argument('--clf-num-layers', default=1, type=int)
+    parser.add_argument('--clf-num-layers', default=2, type=int)
     parser.add_argument('--leaf-rnn', default=True, action='store_true')
     parser.add_argument('--bidirectional', default=False, action='store_true')
     parser.add_argument('--intra-attention', default=False, action='store_true')
     parser.add_argument('--batchnorm', default=True, action='store_true')
     parser.add_argument('--dropout', default=0.1, type=float)
-    parser.add_argument('--fix-word-embedding', action='store_true')
-    parser.add_argument('--batch-size', default=128, type=int)
-    parser.add_argument('--max-epoch', default=10, type=int)
+    parser.add_argument('--fix-word-embedding', default=True, action='store_true')
+    parser.add_argument('--rich-state', default=False, action='store_true')
+    parser.add_argument('--batch-size', default=100, type=int)
+    parser.add_argument('--max-epoch', default=7, type=int)
     parser.add_argument('--lr', default=0.001, type=float)
+    parser.add_argument('--lrd_every_epoch', default=0.8, type=float)
     parser.add_argument('--optimizer', default='adam')
     parser.add_argument('--l2reg', default=1e-5, type=float)
 

@@ -3,11 +3,9 @@ import argparse
 import numpy as np
 import torch
 from torchtext import data, datasets
-from torch.autograd import Variable
-from collections import Counter, defaultdict
+
 from sst.model import SSTModel, SSTAttModel
 from utils.helper import wrap_with_variable, unwrap_scalar_variable
-from IPython import embed
 
 
 def evaluate(args):
@@ -15,13 +13,8 @@ def evaluate(args):
                             batch_first=True)
     label_field = data.Field(sequential=False)
 
-    filter_pred = None
-    if not args.fine_grained:
-        filter_pred = lambda ex: ex.label != 'neutral'
-    dataset_splits = datasets.SST.splits(
-        root=args.datadir, text_field=text_field, label_field=label_field,
-        fine_grained=args.fine_grained, train_subtrees=True,
-        filter_pred=filter_pred)
+    dataset_splits = datasets.IMDB.splits(
+        root=args.datadir, text_field=text_field, label_field=label_field)
     test_dataset = dataset_splits[2]
 
     text_field.build_vocab(*dataset_splits)
@@ -31,7 +24,7 @@ def evaluate(args):
 
     print(f'Number of classes: {len(label_field.vocab)}')
 
-    _, _, test_loader = data.BucketIterator.splits(
+    _, test_loader = data.BucketIterator.splits(
         datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
 
     num_classes = len(label_field.vocab)
@@ -60,12 +53,7 @@ def evaluate(args):
                       bidirectional=args.bidirectional,
                       cell_type=args.cell_type,
                       att_type=args.att_type,
-                      sample_num=1,
-                      rich_state=args.rich_state,
-                      rank_init='normal',
-                      rank_input=args.rank_input,
-                      rank_detach=False,
-                      rank_tanh=args.rank_tanh)
+                      sample_num=args.sample_num)
     num_params = sum(np.prod(p.size()) for p in model.parameters())
     num_embedding_params = np.prod(model.word_embedding.weight.size())
     print(f'# of parameters: {num_params}')
@@ -78,34 +66,15 @@ def evaluate(args):
         model.cuda(args.gpu)
     num_correct = 0
     num_data = len(test_dataset)
-
-
-    scores = {}
-    for w, i in text_field.vocab.stoi.items():
-        i = Variable(torch.Tensor((i,))).long()
-        if args.gpu > -1:
-            i = i.cuda()
-        scores[w] = unwrap_scalar_variable(
-                model.encoder.calc_score(None, model.word_embedding(i)).squeeze()
-                )
-    sort_scores = list(map(lambda _: _[0], Counter(scores).most_common()))
-    filter_scores = list(filter(lambda w: text_field.vocab.freqs.get(w)!=None and  text_field.vocab.freqs.get(w)> 50, sort_scores))
-    print()
-    print('; '.join(sort_scores[:50]))
-    print()
-    print('; '.join(sort_scores[-50:]))
-    print()
-    embed()
     for batch in test_loader:
         words, length = batch.text
         label = batch.label
         length = wrap_with_variable(length, volatile=True, gpu=args.gpu)
         logits, supplements = model(words=words, length=length, display=True)
         label_pred = logits.max(1)[1]
-        num_correct_batch = unwrap_scalar_variable(torch.eq(label, label_pred).long().sum())
+        num_correct_batch = torch.eq(label, label_pred).long().sum()
+        num_correct_batch = unwrap_scalar_variable(num_correct_batch)
         num_correct += num_correct_batch
-        for t in supplements['trees']:
-            print(t)
     print(f'# data: {num_data}')
     print(f'# correct: {num_correct}')
     print(f'Accuracy: {num_correct / num_data:.4f}')
@@ -113,27 +82,24 @@ def evaluate(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--datadir', default='/data/share/stanfordSentimentTreebank/')
+    parser.add_argument('--datadir', default='/data/share/aclImdb/')
     parser.add_argument('--ckpt', required=True)
-    parser.add_argument('--cell_type', default='treelstm', choices=['treelstm', 'Nary', 'TriPad'])
+    parser.add_argument('--cell_type', default='treelstm', choices=['treelstm', 'simple', 'P2K', 'Tri'])
     parser.add_argument('--model_type', default='binary', choices=['binary', 'att'])
-    parser.add_argument('--att_type', default='corpus', choices=['corpus', 'rank0', 'rank1', 'rank2'], help='Used only when model_type==att')
-    parser.add_argument('--rich-state', default=False, action='store_true')
-    parser.add_argument('--rank_input', default='word', choices=['word', 'h'])
-    parser.add_argument('--rank_tanh', action='store_true')
+    parser.add_argument('--att_type', default='corpus', choices=['corpus', 'rank0', 'rank1'], help='Used only when model_type==att')
+    parser.add_argument('--sample_num', default=1, type=int)
 
     
     parser.add_argument('--word-dim', default=300, type=int)
     parser.add_argument('--hidden-dim', default=300, type=int)
-    parser.add_argument('--clf-hidden-dim', default=300, type=int)
-    parser.add_argument('--clf-num-layers', default=1, type=int)
+    parser.add_argument('--clf-hidden-dim', default=1024, type=int)
+    parser.add_argument('--clf-num-layers', default=2, type=int)
     parser.add_argument('--leaf-rnn', default=True, action='store_true')
-    parser.add_argument('--batchnorm', action='store_true')
+    parser.add_argument('--batchnorm', default=True, action='store_true')
     parser.add_argument('--dropout', default=0.5, type=float)
     parser.add_argument('--gpu', default=0, type=int)
     parser.add_argument('--batch-size', default=32, type=int)
     parser.add_argument('--bidirectional', default=False, action='store_true')
-
 
     parser.add_argument('--weighted', default=False, action='store_true')
     parser.add_argument('--weighted_base', type=float, default=2)

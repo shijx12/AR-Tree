@@ -2,41 +2,20 @@ import argparse
 
 import numpy as np
 import torch
-from torchtext import data, datasets
-from torch.autograd import Variable
-from collections import Counter, defaultdict
+from age.dataset import AGE2
 from sst.model import SSTModel, SSTAttModel
 from utils.helper import wrap_with_variable, unwrap_scalar_variable
+from collections import Counter, defaultdict
+from torch.autograd import Variable
 from IPython import embed
 
 
 def evaluate(args):
-    text_field = data.Field(lower=args.lower, include_lengths=True,
-                            batch_first=True)
-    label_field = data.Field(sequential=False)
-
-    filter_pred = None
-    if not args.fine_grained:
-        filter_pred = lambda ex: ex.label != 'neutral'
-    dataset_splits = datasets.SST.splits(
-        root=args.datadir, text_field=text_field, label_field=label_field,
-        fine_grained=args.fine_grained, train_subtrees=True,
-        filter_pred=filter_pred)
-    test_dataset = dataset_splits[2]
-
-    text_field.build_vocab(*dataset_splits)
-    label_field.build_vocab(*dataset_splits)
-    text_field.vocab.id_to_word = lambda i: text_field.vocab.itos[i]
-    text_field.vocab.id_to_tf = lambda i: text_field.freqs[i]
-
-    print(f'Number of classes: {len(label_field.vocab)}')
-
-    _, _, test_loader = data.BucketIterator.splits(
-        datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
-
-    num_classes = len(label_field.vocab)
+    data = AGE2(datapath=args.data, batch_size=args.batch_size)
+    num_classes = 5
+    num_words = data.num_words
     if args.model_type == 'binary':
-        model = SSTModel(num_classes=num_classes, num_words=len(text_field.vocab),
+        model = SSTModel(num_classes=num_classes, num_words=num_words,
                     word_dim=args.word_dim, hidden_dim=args.hidden_dim,
                     clf_hidden_dim=args.clf_hidden_dim,
                     clf_num_layers=args.clf_num_layers,
@@ -49,8 +28,8 @@ def evaluate(args):
                     weighted_update=args.weighted_update,
                     cell_type=args.cell_type)
     else:
-        model = SSTAttModel(vocab=text_field.vocab,
-                      num_classes=num_classes, num_words=len(text_field.vocab),
+        model = SSTAttModel(vocab=data,
+                      num_classes=num_classes, num_words=num_words,
                       word_dim=args.word_dim, hidden_dim=args.hidden_dim,
                       clf_hidden_dim=args.clf_hidden_dim,
                       clf_num_layers=args.clf_num_layers,
@@ -77,11 +56,11 @@ def evaluate(args):
     if args.gpu > -1:
         model.cuda(args.gpu)
     num_correct = 0
-    num_data = len(test_dataset)
+    num_data = data.test_size
 
 
     scores = {}
-    for w, i in text_field.vocab.stoi.items():
+    for w, i in data._word_to_id.items():
         i = Variable(torch.Tensor((i,))).long()
         if args.gpu > -1:
             i = i.cuda()
@@ -89,17 +68,18 @@ def evaluate(args):
                 model.encoder.calc_score(None, model.word_embedding(i)).squeeze()
                 )
     sort_scores = list(map(lambda _: _[0], Counter(scores).most_common()))
-    filter_scores = list(filter(lambda w: text_field.vocab.freqs.get(w)!=None and  text_field.vocab.freqs.get(w)> 50, sort_scores))
     print()
     print('; '.join(sort_scores[:50]))
     print()
     print('; '.join(sort_scores[-50:]))
     print()
     embed()
-    for batch in test_loader:
-        words, length = batch.text
-        label = batch.label
+    for batch in data.test_minibatch_generator():
+        words, length, label = batch
+
         length = wrap_with_variable(length, volatile=True, gpu=args.gpu)
+        words = wrap_with_variable(words, volatile=True, gpu=args.gpu)
+        label = wrap_with_variable(label, volatile=True, gpu=args.gpu)
         logits, supplements = model(words=words, length=length, display=True)
         label_pred = logits.max(1)[1]
         num_correct_batch = unwrap_scalar_variable(torch.eq(label, label_pred).long().sum())
@@ -113,7 +93,7 @@ def evaluate(args):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--datadir', default='/data/share/stanfordSentimentTreebank/')
+    parser.add_argument('--data', default='./data/age2.pickle')
     parser.add_argument('--ckpt', required=True)
     parser.add_argument('--cell_type', default='treelstm', choices=['treelstm', 'Nary', 'TriPad'])
     parser.add_argument('--model_type', default='binary', choices=['binary', 'att'])
@@ -125,22 +105,19 @@ def main():
     
     parser.add_argument('--word-dim', default=300, type=int)
     parser.add_argument('--hidden-dim', default=300, type=int)
-    parser.add_argument('--clf-hidden-dim', default=300, type=int)
-    parser.add_argument('--clf-num-layers', default=1, type=int)
+    parser.add_argument('--clf-hidden-dim', default=2000, type=int)
+    parser.add_argument('--clf-num-layers', default=2, type=int)
     parser.add_argument('--leaf-rnn', default=True, action='store_true')
     parser.add_argument('--batchnorm', action='store_true')
-    parser.add_argument('--dropout', default=0.5, type=float)
+    parser.add_argument('--dropout', default=0.3, type=float)
     parser.add_argument('--gpu', default=0, type=int)
     parser.add_argument('--batch-size', default=32, type=int)
-    parser.add_argument('--bidirectional', default=False, action='store_true')
+    parser.add_argument('--bidirectional', default=True, action='store_true')
 
 
     parser.add_argument('--weighted', default=False, action='store_true')
     parser.add_argument('--weighted_base', type=float, default=2)
     parser.add_argument('--weighted_update', default=False, action='store_true')
-
-    parser.add_argument('--fine-grained', default=False, action='store_true')
-    parser.add_argument('--lower', default=False, action='store_true')
     args = parser.parse_args()
     evaluate(args)
 

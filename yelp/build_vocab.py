@@ -1,6 +1,5 @@
 import argparse
 
-import jsonlines
 from nltk import word_tokenize
 from collections import Counter
 
@@ -8,17 +7,14 @@ from collections import Counter
 def collect_words(path, lower):
     word_tf = Counter()
     word_df = Counter()
-    with jsonlines.open(path, 'r') as reader:
-        for obj in reader:
-            for key in ['sentence1', 'sentence2']:
-                sentence = obj[key]
-                if lower:
-                    sentence = sentence.lower()
-                words = word_tokenize(sentence)
-                for word in words:
-                    word_tf[word] = word_tf.get(word, 0) + 1
-                for word in set(words):
-                    word_df[word] = word_df.get(word, 0) + 1
+    for line in open(path, 'r'):
+        words = line.strip().replace('<split1>', '\t').replace('<split2>', '\t').split()[1:]
+        if lower:
+            words = list(map(lambda x: x.lower(), words))
+        for word in words:
+            word_tf[word] = word_tf.get(word, 0) + 1
+        for word in set(words):
+            word_df[word] = word_df.get(word, 0) + 1
     return word_tf, word_df
 
 

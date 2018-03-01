@@ -127,8 +127,8 @@ class SNLIAttModel(nn.Module):
 
     def __init__(self, vocab, num_classes, num_words, word_dim, hidden_dim,
                  clf_hidden_dim, clf_num_layers, use_leaf_rnn, 
-                 use_batchnorm, dropout_prob, bidirectional, cell_type, att_type, sample_num, 
-                 rich_state, rank_init, rank_input, rank_detach, rank_tanh):
+                 use_batchnorm, dropout_prob, bidirectional, cell_type,
+                 att_type, sample_num, rich_state):
         super(SNLIAttModel, self).__init__()
         self.num_classes = num_classes
         self.word_dim = word_dim
@@ -152,11 +152,7 @@ class SNLIAttModel(nn.Module):
                                     cell_type=cell_type,
                                     att_type=att_type,
                                     sample_num=sample_num,
-                                    rich_state=rich_state,
-                                    rank_init=rank_init,
-                                    rank_input=rank_input,
-                                    rank_detach=rank_detach,
-                                    rank_tanh=rank_tanh)
+                                    rich_state=rich_state)
         if bidirectional:
             clf_input_dim = 2 * hidden_dim
         else:
@@ -195,6 +191,4 @@ class SNLIAttModel(nn.Module):
             supplements['sample_logits'] = sample_logits
             supplements['pre_probs'] = pre_samples['probs']
             supplements['hyp_probs'] = hyp_samples['probs']
-            supplements['pre_sample_trees'] = pre_samples['trees']
-            supplements['hyp_sample_trees'] = hyp_samples['trees']
         return logits, supplements
