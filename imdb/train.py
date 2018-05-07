@@ -47,10 +47,10 @@ def train(args):
         valid_set.examples = examples[l:]
         dataset_splits = (train_set, valid_set, test_set)
         train_loader, valid_loader, _ = data.BucketIterator.splits(
-            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
+            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu, sort_within_batch=True)
     else: # use test set as valid set
         train_loader, valid_loader = data.BucketIterator.splits(
-            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
+            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu, sort_within_batch=True)
 
 
     num_classes = len(label_field.vocab)
@@ -236,10 +236,10 @@ def train_withsampleRL(args):
         valid_set.examples = examples[l:]
         dataset_splits = (train_set, valid_set, test_set)
         train_loader, valid_loader, _ = data.BucketIterator.splits(
-            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
+            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu, sort_within_batch=True)
     else: # use test set as valid set
         train_loader, valid_loader = data.BucketIterator.splits(
-            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu)
+            datasets=dataset_splits, batch_size=args.batch_size, device=args.gpu, sort_within_batch=True)
 
     num_classes = len(label_field.vocab)
     text_field.vocab.id_to_word = lambda i: text_field.vocab.itos[i]

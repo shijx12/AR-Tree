@@ -2,10 +2,158 @@
 import torch
 from torch import nn
 from torch.autograd import Variable
-from torch.nn import functional
-import conf
+from torch.nn import functional, init, Parameter
 import numpy as np
-from IPython import embed
+
+######################################################################
+# layers by Jiaxin
+#
+
+class NaryLSTMLayer(nn.Module): # N-ary Tree-LSTM in the paper of treelstm
+    def __init__(self, hidden_dim):
+        super(NaryLSTMLayer, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.comp_linear = nn.Linear(in_features=3 * hidden_dim,
+                                    out_features=5 * hidden_dim)
+        self.zero = nn.Parameter(torch.zeros(1, hidden_dim), requires_grad=False)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_normal(self.comp_linear.weight.data)
+        init.constant(self.comp_linear.bias.data, val=0)
+
+    def forward(self, l=None, r=None, x=None):
+        """
+        Args:
+            l: (h_l, c_l) tuple, where h and c have the size (batch_size, hidden_dim)
+            r: (h_r, c_r) tuple
+            x: (h_x, c_x) tuple. 
+        Returns:
+            h, c : The hidden and cell state of the composed parent
+        """
+        hx, cx = x
+        if l==None:
+            l = (self.zero, self.zero)
+        if r==None:
+            r = (self.zero, self.zero)
+        hr, cr = r
+        hl, cl = l
+        h_cat = torch.cat([hx, hl, hr], dim=1)
+        comp_vector = self.comp_linear(h_cat)
+        i, fl, fr, u, o = torch.chunk(comp_vector, chunks=5, dim=1)
+        c = (cl*(fl + 1).sigmoid() + cr*(fr + 1).sigmoid() + u.tanh()*i.sigmoid())
+        h = o.sigmoid() * c.tanh()
+        return h, c 
+
+class TriPadLSTMLayer(nn.Module):
+    def __init__(self, hidden_dim):
+        super(TriPadLSTMLayer, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.comp_linear = nn.Linear(in_features=3 * hidden_dim,
+                                    out_features=6 * hidden_dim)
+        self.zero = nn.Parameter(torch.zeros(1, hidden_dim), requires_grad=False)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_normal(self.comp_linear.weight.data)
+        init.constant(self.comp_linear.bias.data, val=0)
+
+    def forward(self, l=None, r=None, m=None):
+        """
+        Args:
+            l: (h_l, c_l) tuple, where h and c have the size (batch_size, hidden_dim)
+            r: (h_r, c_r) tuple
+            m: (h_m, c_m) tuple. 
+        Returns:
+            h, c : The hidden and cell state of the composed parent
+        """
+        hm, cm = m
+        if l==None:
+            l = (self.zero, self.zero)
+        if r==None:
+            r = (self.zero, self.zero)
+        hr, cr = r
+        hl, cl = l
+        h_cat = torch.cat([hl, hm, hr], dim=1)
+        comp_vector = self.comp_linear(h_cat)
+        i, fl, fm, fr, u, o = torch.chunk(comp_vector, chunks=6, dim=1)
+        c = (cl*(fl + 1).sigmoid() + cm*(fm + 1).sigmoid() + cr*(fr + 1).sigmoid()
+            + u.tanh()*i.sigmoid())
+        h = o.sigmoid() * c.tanh()
+        return h, c 
+
+
+class LayerNorm(nn.Module):
+
+    def __init__(self, features, eps=1e-6):
+        super().__init__()
+        self.gamma = nn.Parameter(torch.ones(features))
+        self.beta = nn.Parameter(torch.zeros(features))
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.gamma * (x - mean) / (std + self.eps) + self.beta
+
+
+class LayerNormLSTMCell(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(LayerNormLSTMCell, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.i2h = nn.Linear(input_size, 4 * hidden_size)
+        self.h2h = nn.Linear(hidden_size, 4 * hidden_size)
+        nn.LayerNorm = LayerNorm
+        self.ln_i2h = nn.LayerNorm(4 * hidden_size)
+        self.ln_h2h = nn.LayerNorm(4 * hidden_size)
+        self.ln_c = nn.LayerNorm(hidden_size)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_normal(self.i2h.weight.data)
+        init.orthogonal(self.h2h.weight.data)
+        init.constant(self.i2h.bias.data, val=0)
+        init.constant(self.h2h.bias.data, val=0)
+
+    def forward(self, input, hx):
+        h_prev, c_prev = hx
+        hi = self.ln_i2h(self.i2h(input))
+        hh = self.ln_h2h(self.h2h(h_prev))
+        i, f, u, o = torch.chunk(hi + hh, chunks=4, dim=1)
+        c = self.ln_c(c_prev*(f + 1).sigmoid() + u.tanh()*i.sigmoid())
+        h = o.sigmoid() * c.tanh()
+        return h, c
+
+
+class ForgetMoreLSTMCell(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(ForgetMoreLSTMCell, self).__init__()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.i2h = nn.Linear(input_size, 4 * hidden_size)
+        self.h2h = nn.Linear(hidden_size, 4 * hidden_size)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        init.kaiming_normal(self.i2h.weight.data)
+        init.orthogonal(self.h2h.weight.data)
+        init.constant(self.i2h.bias.data, val=0)
+        init.constant(self.h2h.bias.data, val=0)
+
+    def forward(self, input, hx):
+        h_prev, c_prev = hx
+        hi = self.i2h(input)
+        hh = self.h2h(h_prev)
+        i, f, u, o = torch.chunk(hi + hh, chunks=4, dim=1)
+        c = c_prev*(f + 1).sigmoid() + u.tanh()*i.sigmoid()
+        h = o.sigmoid() * c.tanh()
+        return h, c
+
+
+##############################################################################
+
+
 
 def apply_nd(fn, input):
     """
@@ -90,11 +238,12 @@ def convert_to_one_hot(indices, num_classes):
 
 def masked_softmax(logits, mask=None):
     eps = 1e-20
-    probs = functional.softmax(logits, dim=1)
+    dim = 0 if logits.ndimension() == 1 else 1
+    probs = functional.softmax(logits, dim=dim)
     if mask is not None:
         mask = mask.float()
         probs = probs * mask + eps
-        probs = probs / probs.sum(1, keepdim=True)
+        probs = probs / probs.sum(dim, keepdim=True)
     return probs
 
 def weighted_softmax(logits, base, mask=None, weights_mask=None):
@@ -108,14 +257,6 @@ def weighted_softmax(logits, base, mask=None, weights_mask=None):
         weights = torch.pow(base, weights_mask.float())
         probs = probs * mask.float() * weights + eps
         probs = probs / probs.sum(1, keepdim=True)
-    if conf.debug:
-        indices = probs.max(1)[1]
-        mask_length = mask.float().sum(1, keepdim=False)
-        for b in range(indices.size(0)):
-            if mask_length.data[b] > 0 and indices.data[b] >= mask_length.data[b]:
-                print('Select out of mask !')
-                embed()
-                break
     return probs
 
 def greedy_select(logits, mask=None, use_weight=False, weights=None, base=None):
@@ -140,7 +281,7 @@ def st_gumbel_softmax(logits, temperature=1.0, mask=None, use_weight=False, weig
 
     Args:
         logits (Variable): A un-normalized probability values,
-            which has the size (batch_size, num_classes)
+            which has the size (batch_size, num_classes) or (num_classes, )
         temperature (float): A temperature parameter. The higher
             the value is, the smoother the distribution is.
         mask (Variable, optional): If given, it masks the softmax
@@ -160,8 +301,12 @@ def st_gumbel_softmax(logits, temperature=1.0, mask=None, use_weight=False, weig
         y = weighted_softmax(logits=y / temperature, base=base, mask=mask, weights_mask=weights)
     else:
         y = masked_softmax(logits=y / temperature, mask=mask)
-    y_argmax = y.max(1)[1]
-    y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(1)).float()
+    if logits.ndimension() == 1: # no batch dimension
+        y_argmax = y.max(0)[1]
+        y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(0)).float().squeeze()
+    else:
+        y_argmax = y.max(1)[1]
+        y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(1)).float()
     y = (y_hard - y).detach() + y
     return y
 

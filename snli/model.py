@@ -2,8 +2,7 @@ import torch
 from torch import nn
 from torch.nn import init
 
-from model.treelstm import BinaryTreeLSTM
-from model.att_tree import AttTreeLSTM
+
 
 
 class SNLIClassifier(nn.Module):
@@ -63,40 +62,50 @@ class SNLIClassifier(nn.Module):
         return logits
 
 
-class SNLIBinaryModel(nn.Module):
+class SNLIModel(nn.Module):
 
-    def __init__(self, num_classes, num_words, word_dim, hidden_dim,
-                 clf_hidden_dim, clf_num_layers, use_leaf_rnn, intra_attention,
-                 use_batchnorm, dropout_prob, bidirectional, 
-                 weighted_by_interval_length, weighted_base,
-                 weighted_update, cell_type):
-        super(SNLIBinaryModel, self).__init__()
-        self.num_classes = num_classes
-        self.word_dim = word_dim
-        self.hidden_dim = hidden_dim
-        self.clf_hidden_dim = clf_hidden_dim
-        self.clf_num_layers = clf_num_layers
-        self.use_leaf_rnn = use_leaf_rnn
-        self.intra_attention = intra_attention
-        self.use_batchnorm = use_batchnorm
-        self.dropout_prob = dropout_prob
-        self.bidirectional = bidirectional
+    def __init__(self, typ, **kwargs):
+        '''
+        arguments:
+        typ=='Choi':
+            num_classes, num_words, word_dim, hidden_dim,
+            clf_hidden_dim, clf_num_layers, use_leaf_rnn, intra_attention,
+            use_batchnorm, dropout_prob, bidirectional, 
+            weighted_by_interval_length, weighted_base,
+            weighted_update, cell_type
+        typ=='RL-SA':
+            vocab, num_classes, num_words, word_dim, hidden_dim,
+            clf_hidden_dim, clf_num_layers, use_leaf_rnn, 
+            use_batchnorm, dropout_prob, bidirectional, cell_type, att_type, sample_num, 
+            rich_state, rank_init, rank_input, rank_detach, rank_tanh
+        '''
+        super(SNLIModel, self).__init__()
+        num_classes = kwargs['num_classes']
+        hidden_dim = kwargs['hidden_dim']
+        clf_hidden_dim = kwargs['clf_hidden_dim']
+        clf_num_layers = kwargs['clf_num_layers']
+        use_batchnorm = kwargs['use_batchnorm']
+        dropout_prob = kwargs['dropout_prob']
+        bidirectional = kwargs['bidirectional']
+        self.typ = typ
 
-        self.word_embedding = nn.Embedding(num_embeddings=num_words,
-                                           embedding_dim=word_dim)
-        self.encoder = BinaryTreeLSTM(word_dim=word_dim, hidden_dim=hidden_dim,
-                                      use_leaf_rnn=use_leaf_rnn,
-                                      intra_attention=intra_attention,
-                                      gumbel_temperature=1,
-                                      bidirectional=bidirectional,
-                                      weighted_by_interval_length=weighted_by_interval_length,
-                                      weighted_base=weighted_base,
-                                      weighted_update=weighted_update,
-                                      cell_type=cell_type)
-        if bidirectional:
-            clf_input_dim = 2 * hidden_dim
-        else:
-            clf_input_dim = hidden_dim
+        self.word_embedding = nn.Embedding(num_embeddings=kwargs['num_words'],
+                                           embedding_dim=kwargs['word_dim'])
+        if typ == 'Choi':
+            from model.Choi_Tree import BinaryTreeLSTM
+            kwargs['gumbel_temperature'] = 1
+            self.encoder = BinaryTreeLSTM(**kwargs)
+        elif typ == 'tfidf-SA':
+            from model.tfidf_Tree import tfidfTree
+            self.encoder = tfidfTree(**kwargs)
+        elif typ == 'RL-SA':
+            from model.RL_SA_Tree import RlSaTree
+            self.encoder = RlSaTree(**kwargs)
+        elif typ == 'STG-SA':
+            from model.STGumbel_SA_Tree import STGumbelSaTree
+            self.encoder = STGumbelSaTree(**kwargs)
+
+        clf_input_dim = 2*hidden_dim if bidirectional else hidden_dim
         self.classifier = SNLIClassifier(
             num_classes=num_classes, input_dim=clf_input_dim,
             hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
@@ -114,87 +123,35 @@ class SNLIBinaryModel(nn.Module):
         hyp_embeddings = self.word_embedding(hyp)
         pre_embeddings = self.dropout(pre_embeddings)
         hyp_embeddings = self.dropout(hyp_embeddings)
-        supplements = {}
-        pre_h, _, pre_select_masks = self.encoder(input=pre_embeddings, length=pre_length, return_select_masks=True)
-        hyp_h, _, hyp_select_masks = self.encoder(input=hyp_embeddings, length=hyp_length, return_select_masks=True)
-        logits = self.classifier(pre=pre_h, hyp=hyp_h)
-        supplements['pre_select_masks'] = pre_select_masks
-        supplements['hyp_select_masks'] = hyp_select_masks
-        return logits, supplements
 
-
-class SNLIAttModel(nn.Module):
-
-    def __init__(self, vocab, num_classes, num_words, word_dim, hidden_dim,
-                 clf_hidden_dim, clf_num_layers, use_leaf_rnn, 
-                 use_batchnorm, dropout_prob, bidirectional, cell_type, att_type, sample_num, 
-                 rich_state, rank_init, rank_input, rank_detach, rank_tanh):
-        super(SNLIAttModel, self).__init__()
-        self.num_classes = num_classes
-        self.word_dim = word_dim
-        self.hidden_dim = hidden_dim
-        self.clf_hidden_dim = clf_hidden_dim
-        self.clf_num_layers = clf_num_layers
-        self.use_leaf_rnn = use_leaf_rnn
-        self.use_batchnorm = use_batchnorm
-        self.dropout_prob = dropout_prob
-        self.bidirectional = bidirectional
-        self.att_type = att_type
-        self.sample_num = sample_num
-
-        self.word_embedding = nn.Embedding(num_embeddings=num_words,
-                                           embedding_dim=word_dim)
-        self.encoder = AttTreeLSTM(vocab=vocab,
-                                    word_dim=word_dim, 
-                                    hidden_dim=hidden_dim,
-                                    use_leaf_rnn=use_leaf_rnn,
-                                    bidirectional=bidirectional,
-                                    cell_type=cell_type,
-                                    att_type=att_type,
-                                    sample_num=sample_num,
-                                    rich_state=rich_state,
-                                    rank_init=rank_init,
-                                    rank_input=rank_input,
-                                    rank_detach=rank_detach,
-                                    rank_tanh=rank_tanh)
-        if bidirectional:
-            clf_input_dim = 2 * hidden_dim
-        else:
-            clf_input_dim = hidden_dim
-        self.classifier = SNLIClassifier(
-            num_classes=num_classes, input_dim=clf_input_dim,
-            hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
-            use_batchnorm=use_batchnorm, dropout_prob=dropout_prob)
-        self.dropout = nn.Dropout(dropout_prob)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        init.normal(self.word_embedding.weight.data, mean=0, std=0.01)
-        self.encoder.reset_parameters()
-        self.classifier.reset_parameters()
-
-    def forward(self, pre, pre_length, hyp, hyp_length, display=False):
-        pre_embeddings = self.word_embedding(pre)
-        hyp_embeddings = self.word_embedding(hyp)
-        pre_embeddings = self.dropout(pre_embeddings)
-        hyp_embeddings = self.dropout(hyp_embeddings)
-        pre_h, _, pre_tree, pre_samples = self.encoder(
-                sentence_embedding=pre_embeddings, 
-                sentence_word=pre, 
-                length=pre_length, display=display)
-        hyp_h, _, hyp_tree, hyp_samples = self.encoder(
-                sentence_embedding=hyp_embeddings, 
-                sentence_word=hyp, 
-                length=hyp_length, display=display)
-        logits = self.classifier(pre=pre_h, hyp=hyp_h)
-        supplements = {'pre_tree': pre_tree, 'hyp_tree': hyp_tree}
-        ######################
-        # samples prediction for REINFORCE
-        if self.att_type != 'corpus':
-            sample_logits = self.classifier(pre=pre_samples['h'], hyp=hyp_samples['h']) if self.sample_num > 0 else None
+        ############################################################################
+        if self.typ == 'Choi': 
+            supplements = {}
+            pre_h, _, pre_select_masks = self.encoder(input=pre_embeddings, length=pre_length, return_select_masks=True)
+            hyp_h, _, hyp_select_masks = self.encoder(input=hyp_embeddings, length=hyp_length, return_select_masks=True)
+            logits = self.classifier(pre=pre_h, hyp=hyp_h)
+            supplements['pre_select_masks'] = pre_select_masks
+            supplements['hyp_select_masks'] = hyp_select_masks
+        ############################################################################
+        elif self.typ == 'tfidf-SA' or self.typ == 'STG-SA':
+            pre_h, _, pre_tree = self.encoder(sentence_embedding=pre_embeddings, sentence_word=pre, length=pre_length)
+            hyp_h, _, hyp_tree = self.encoder(sentence_embedding=hyp_embeddings, sentence_word=hyp, length=hyp_length)
+            logits = self.classifier(pre=pre_h, hyp=hyp_h)
+            supplements = {'pre_tree': pre_tree, 'hyp_tree': hyp_tree}
+        ############################################################################
+        elif self.typ == 'RL-SA':
+            pre_h, _, pre_tree, pre_samples = self.encoder(sentence_embedding=pre_embeddings, sentence_word=pre, length=pre_length)
+            hyp_h, _, hyp_tree, hyp_samples = self.encoder(sentence_embedding=hyp_embeddings, sentence_word=hyp, length=hyp_length)
+            logits = self.classifier(pre=pre_h, hyp=hyp_h)
+            supplements = {'pre_tree': pre_tree, 'hyp_tree': hyp_tree}
+            # samples prediction for REINFORCE
+            sample_logits = self.classifier(pre=pre_samples['h'], hyp=hyp_samples['h'])
             supplements['sample_logits'] = sample_logits
             supplements['pre_probs'] = pre_samples['probs']
             supplements['hyp_probs'] = hyp_samples['probs']
             supplements['pre_sample_trees'] = pre_samples['trees']
             supplements['hyp_sample_trees'] = hyp_samples['trees']
+        ############################################################################
+
         return logits, supplements
+

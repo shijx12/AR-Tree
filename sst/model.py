@@ -1,10 +1,6 @@
 from torch import nn
 from torch.nn import init
 
-from model.treelstm import BinaryTreeLSTM
-from model.att_tree import AttTreeLSTM
-
-
 class SSTClassifier(nn.Module):
 
     def __init__(self, num_classes, input_dim, hidden_dim, num_layers,
@@ -60,120 +56,76 @@ class SSTClassifier(nn.Module):
 
 class SSTModel(nn.Module):
 
-    def __init__(self, num_classes, num_words, word_dim, hidden_dim,
-                 clf_hidden_dim, clf_num_layers, use_leaf_rnn, bidirectional,
-                 use_batchnorm, dropout_prob,
-                 weighted_by_interval_length, weighted_base, weighted_update,
-                 cell_type):
+    def __init__(self, typ, **kwargs):
+        '''
+        typ=='Choi':
+            num_classes, num_words, word_dim, hidden_dim,
+            clf_hidden_dim, clf_num_layers, use_leaf_rnn, bidirectional,
+            use_batchnorm, dropout_prob,
+            weighted_by_interval_length, weighted_base, weighted_update,
+            cell_type
+        '''
         super(SSTModel, self).__init__()
-        self.num_classes = num_classes
-        self.word_dim = word_dim
-        self.hidden_dim = hidden_dim
-        self.clf_hidden_dim = clf_hidden_dim
-        self.clf_num_layers = clf_num_layers
-        self.use_leaf_rnn = use_leaf_rnn
-        self.bidirectional = bidirectional
-        self.use_batchnorm = use_batchnorm
-        self.dropout_prob = dropout_prob
+        num_classes = kwargs['num_classes']
+        hidden_dim = kwargs['hidden_dim']
+        clf_hidden_dim = kwargs['clf_hidden_dim']
+        clf_num_layers = kwargs['clf_num_layers']
+        use_batchnorm = kwargs['use_batchnorm']
+        dropout_prob = kwargs['dropout_prob']
+        bidirectional = kwargs.get('bidirectional', False)
+        self.typ = typ
 
-        self.dropout = nn.Dropout(dropout_prob)
-        self.word_embedding = nn.Embedding(num_embeddings=num_words,
-                                           embedding_dim=word_dim)
-        self.encoder = BinaryTreeLSTM(word_dim=word_dim, hidden_dim=hidden_dim,
-                                      use_leaf_rnn=use_leaf_rnn,
-                                      intra_attention=False,
-                                      gumbel_temperature=1,
-                                      bidirectional=bidirectional,
-                                      weighted_by_interval_length=weighted_by_interval_length,
-                                      weighted_base=weighted_base,
-                                      weighted_update=weighted_update,
-                                      cell_type=cell_type)
-        if bidirectional:
-            clf_input_dim = 2 * hidden_dim
-        else:
-            clf_input_dim = hidden_dim
+        self.word_embedding = nn.Embedding(num_embeddings=kwargs['num_words'],
+                                           embedding_dim=kwargs['word_dim'])
+        if typ == 'Choi':
+            from model.Choi_Treelstm import BinaryTreeLSTM
+            kwargs['gumbel_temperature'] = 1
+            self.encoder = BinaryTreeLSTM(**kwargs)
+        elif typ == 'tfidf-SA':
+            from model.tfidf_Tree import tfidfTree
+            self.encoder = tfidfTree(**kwargs)
+        elif typ == 'RL-SA':
+            from model.RL_SA_Tree import RlSaTree
+            self.encoder = RlSaTree(**kwargs)
+        elif typ == 'STG-SA':
+            from model.STGumbel_SA_Tree import STGumbelSaTree
+            self.encoder = STGumbelSaTree(**kwargs)
+        elif typ == 'SSA':
+            from model.Self_Seg_Att_Tree import SelfSegAttenTree
+            self.encoder = SelfSegAttenTree(**kwargs)
+        
+        clf_input_dim = 2*hidden_dim if bidirectional else hidden_dim
         self.classifier = SSTClassifier(
             num_classes=num_classes, input_dim=clf_input_dim,
             hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
             use_batchnorm=use_batchnorm, dropout_prob=dropout_prob)
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        init.normal(self.word_embedding.weight.data, mean=0, std=0.01)
-        self.encoder.reset_parameters()
-        self.classifier.reset_parameters()
-
-    def forward(self, words, length, display=False):
-        words_embed = self.word_embedding(words)
-        words_embed = self.dropout(words_embed)
-        sentence_vector, _, select_masks = self.encoder(input=words_embed, length=length, return_select_masks=True)
-        logits = self.classifier(sentence_vector)
-        supplements = {'select_masks': select_masks}
-        return logits, supplements
-
-
-class SSTAttModel(nn.Module):
-
-    def __init__(self, vocab, num_classes, num_words, word_dim, hidden_dim,
-                 clf_hidden_dim, clf_num_layers, use_leaf_rnn, bidirectional,
-                 use_batchnorm, dropout_prob, cell_type, att_type, 
-                 sample_num, rich_state, rank_init, rank_input, rank_detach, rank_tanh):
-        super(SSTAttModel, self).__init__()
-        self.num_classes = num_classes
-        self.word_dim = word_dim
-        self.hidden_dim = hidden_dim
-        self.clf_hidden_dim = clf_hidden_dim
-        self.clf_num_layers = clf_num_layers
-        self.use_leaf_rnn = use_leaf_rnn
-        self.bidirectional = bidirectional
-        self.use_batchnorm = use_batchnorm
-        self.dropout_prob = dropout_prob
-        self.att_type = att_type
-        self.sample_num = sample_num
-
         self.dropout = nn.Dropout(dropout_prob)
-        self.word_embedding = nn.Embedding(num_embeddings=num_words,
-                                           embedding_dim=word_dim)
-        self.encoder =  AttTreeLSTM(vocab=vocab,
-                                    word_dim=word_dim, 
-                                    hidden_dim=hidden_dim,
-                                    use_leaf_rnn=use_leaf_rnn,
-                                    bidirectional=bidirectional,
-                                    cell_type=cell_type,
-                                    att_type=att_type,
-                                    sample_num=sample_num,
-                                    rich_state=rich_state,
-                                    rank_init=rank_init,
-                                    rank_input=rank_input,
-                                    rank_detach=rank_detach,
-                                    rank_tanh=rank_tanh)
-        if bidirectional:
-            clf_input_dim = 2 * hidden_dim
-        else:
-            clf_input_dim = hidden_dim
-        self.classifier = SSTClassifier(
-            num_classes=num_classes, input_dim=clf_input_dim,
-            hidden_dim=clf_hidden_dim, num_layers=clf_num_layers,
-            use_batchnorm=use_batchnorm, dropout_prob=dropout_prob)
         self.reset_parameters()
 
     def reset_parameters(self):
         init.normal(self.word_embedding.weight.data, mean=0, std=0.01)
-        self.encoder.reset_parameters()
         self.classifier.reset_parameters()
 
-    def forward(self, words, length, display=False):
+    def forward(self, words, length):
         words_embed = self.word_embedding(words)
         words_embed = self.dropout(words_embed)
-        sentence_vector, _, trees, samples = self.encoder(
-                sentence_embedding=words_embed, 
-                sentence_word=words,
-                length=length, display=display)
-        logits = self.classifier(sentence_vector)
-        supplements = {'trees': trees}
-        ###########################
-        # samples prediction for REINFORCE
-        if self.att_type != 'corpus':
+
+        ############################################################################
+        if self.typ == 'Choi': 
+            h, _, select_masks = self.encoder(input=words_embed, length=length, return_select_masks=True)
+            logits = self.classifier(h)
+            supplements = {'select_masks': select_masks}
+        ############################################################################
+        elif self.typ == 'tfidf-SA' or self.typ == 'STG-SA' or self.typ == 'SSA':
+            h, _, tree = self.encoder(words_embed, words, length)
+            logits = self.classifier(h)
+            supplements = {'tree': tree}
+        ############################################################################
+        elif self.typ == 'RL-SA':
+            h, _, tree, samples = self.encoder(words_embed, words, length)
+            logits = self.classifier(h)
+            supplements = {'tree': tree}
+            # samples prediction for REINFORCE
             sample_logits = self.classifier(samples['h'])
             supplements['sample_logits'] = sample_logits
             supplements['probs'] = samples['probs']

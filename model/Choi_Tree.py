@@ -41,73 +41,43 @@ class BinaryTreeLSTMLayer(nn.Module):
         h = o.sigmoid() * c.tanh()
         return h, c, lens_l+lens_r # directly sum up the children's lens to obtain parent's lens
 
-class SimpleLayer(nn.Module):
-
-    def __init__(self, hidden_dim):
-        super(SimpleLayer, self).__init__()
-        self.hidden_dim = hidden_dim
-        self.comp_linear = nn.Linear(in_features=2 * hidden_dim,
-                            out_features = hidden_dim)
-        # TODO: more parameters
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        init.kaiming_normal(self.comp_linear.weight.data)
-        init.constant(self.comp_linear.bias.data, val=0)
-
-    def forward(self, l=None, r=None):
-        hl, cl, lens_l = l
-        hr, cr, lens_r = r
-        hlr_cat = torch.cat([hl, hr], dim=2)
-        h = basic.apply_nd(fn=self.comp_linear, input=hlr_cat)
-        h = h.sigmoid()
-        return h, None, lens_l+lens_r
-
 
 class BinaryTreeLSTM(nn.Module):
 
-    def __init__(self, word_dim, hidden_dim, use_leaf_rnn, intra_attention,
-                 gumbel_temperature, bidirectional, weighted_by_interval_length, weighted_base,
-                 weighted_update, cell_type):
+    def __init__(self, **kwargs):
+        '''word_dim, hidden_dim, use_leaf_rnn, intra_attention,
+        gumbel_temperature, bidirectional, weighted_by_interval_length, weighted_base,
+        weighted_update '''
         super(BinaryTreeLSTM, self).__init__()
-        self.word_dim = word_dim
-        self.hidden_dim = hidden_dim
-        self.use_leaf_rnn = use_leaf_rnn
-        self.intra_attention = intra_attention
-        self.gumbel_temperature = gumbel_temperature
-        self.bidirectional = bidirectional
-        self.weighted_by_interval_length = weighted_by_interval_length
-        # Note base of <torch.pow> should be a Variable. requires_grad can control whether it is trainable
-        if weighted_update:
-            self.weighted_base = Parameter(torch.Tensor([weighted_base]).cuda())
-        else:
-            self.weighted_base = Variable(torch.Tensor([weighted_base]).cuda(), requires_grad=False)
-        self.cell_type = cell_type
-        assert self.cell_type in ['treelstm', 'simple']
+        hidden_dim = self.hidden_dim = kwargs['hidden_dim'] 
+        self.use_leaf_rnn = kwargs['use_leaf_rnn'] 
+        self.intra_attention = kwargs['intra_attention'] 
+        self.gumbel_temperature = kwargs['gumbel_temperature'] 
+        self.bidirectional = kwargs['bidirectional'] 
+        self.weighted_by_interval_length = kwargs['weighted_by_interval_length'] 
 
-        ComposeCell = None
-        if self.cell_type == 'treelstm':
-            ComposeCell = BinaryTreeLSTMLayer
-        elif self.cell_type == 'simple':
-            ComposeCell = SimpleLayer
+        word_dim = kwargs['word_dim'] 
+
+        # Note base of <torch.pow> should be a Variable. requires_grad can control whether it is trainable
+        if kwargs['weighted_update']:
+            self.weighted_base = Parameter(torch.Tensor([kwargs['weighted_base']]).cuda())
+        else:
+            self.weighted_base = Variable(torch.Tensor([kwargs['weighted_base']]).cuda(), requires_grad=False)
 
         assert not (self.bidirectional and not self.use_leaf_rnn)
 
-        if use_leaf_rnn:
+        if self.use_leaf_rnn:
             self.leaf_rnn_cell = nn.LSTMCell(
                 input_size=word_dim, hidden_size=hidden_dim)
-            if bidirectional:
+            if self.bidirectional:
                 self.leaf_rnn_cell_bw = nn.LSTMCell(
                     input_size=word_dim, hidden_size=hidden_dim)
         else:
             self.word_linear = nn.Linear(in_features=word_dim,
                                          out_features=2 * hidden_dim)
-        if self.bidirectional:
-            self.treelstm_layer = ComposeCell(2 * hidden_dim)
-            self.comp_query = nn.Parameter(torch.FloatTensor(2 * hidden_dim))
-        else:
-            self.treelstm_layer = ComposeCell(hidden_dim)
-            self.comp_query = nn.Parameter(torch.FloatTensor(hidden_dim))
+        real_hidden_dim = 2*hidden_dim if self.bidirectional else hidden_dim
+        self.treelstm_layer = BinaryTreeLSTMLayer(real_hidden_dim)
+        self.comp_query = nn.Parameter(torch.FloatTensor(real_hidden_dim))
 
         self.reset_parameters()
 

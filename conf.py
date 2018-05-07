@@ -1,2 +1,2 @@
-debug=False
+debug=True
 fast=False
