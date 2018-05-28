@@ -7,7 +7,7 @@ from utils.helper import unwrap_scalar_variable
 from collections import defaultdict
 
 from . import basic
-from basic import NaryLSTMLayer, TriPadLSTMLayer
+from .basic import NaryLSTMLayer, TriPadLSTMLayer
 import numpy as np
 import random
 
