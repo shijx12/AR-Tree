@@ -1,2 +1,0 @@
-debug=True
-fast=False

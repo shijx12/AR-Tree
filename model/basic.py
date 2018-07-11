@@ -1,7 +1,6 @@
 """Basic or helper implementation."""
 import torch
 from torch import nn
-from torch.autograd import Variable
 from torch.nn import functional, init, Parameter
 import numpy as np
 
@@ -11,7 +10,7 @@ import numpy as np
 
 class NaryLSTMLayer(nn.Module): # N-ary Tree-LSTM in the paper of treelstm
     def __init__(self, hidden_dim):
-        super(NaryLSTMLayer, self).__init__()
+        super().__init__()
         self.hidden_dim = hidden_dim
         self.comp_linear = nn.Linear(in_features=3 * hidden_dim,
                                     out_features=5 * hidden_dim)
@@ -19,8 +18,8 @@ class NaryLSTMLayer(nn.Module): # N-ary Tree-LSTM in the paper of treelstm
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_normal(self.comp_linear.weight.data)
-        init.constant(self.comp_linear.bias.data, val=0)
+        init.kaiming_normal_(self.comp_linear.weight.data)
+        init.constant_(self.comp_linear.bias.data, val=0)
 
     def forward(self, l=None, r=None, x=None):
         """
@@ -45,18 +44,18 @@ class NaryLSTMLayer(nn.Module): # N-ary Tree-LSTM in the paper of treelstm
         h = o.sigmoid() * c.tanh()
         return h, c 
 
-class TriPadLSTMLayer(nn.Module):
+class TriPadLSTMLayer(nn.Module): # used in my paper
     def __init__(self, hidden_dim):
-        super(TriPadLSTMLayer, self).__init__()
+        super().__init__()
         self.hidden_dim = hidden_dim
         self.comp_linear = nn.Linear(in_features=3 * hidden_dim,
                                     out_features=6 * hidden_dim)
-        self.zero = nn.Parameter(torch.zeros(1, hidden_dim), requires_grad=False)
+        self.zero = torch.zeros(1, hidden_dim)
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.kaiming_normal(self.comp_linear.weight.data)
-        init.constant(self.comp_linear.bias.data, val=0)
+        init.kaiming_normal_(self.comp_linear.weight.data)
+        init.constant_(self.comp_linear.bias.data, val=0)
 
     def forward(self, l=None, r=None, m=None):
         """
@@ -68,6 +67,7 @@ class TriPadLSTMLayer(nn.Module):
             h, c : The hidden and cell state of the composed parent
         """
         hm, cm = m
+        self.zero = self.zero.to(hm.device)
         if l==None:
             l = (self.zero, self.zero)
         if r==None:
@@ -177,10 +177,10 @@ def affine_nd(input, weight, bias):
     n-dimensional x easier.
 
     Args:
-        input (Variable): An arbitrary input data, whose size is
+        input (tensor): An arbitrary input data, whose size is
             (d0, d1, ..., dn, input_dim)
-        weight (Variable): A matrix of size (output_dim, input_dim)
-        bias (Variable): A bias vector of size (output_dim,)
+        weight (tensor): A matrix of size (output_dim, input_dim)
+        bias (tensor): A bias vector of size (output_dim,)
 
     Returns:
         output: The result of size (d0, ..., dn, output_dim)
@@ -200,9 +200,9 @@ def dot_nd(query, candidates):
     Perform a dot product between a query and n-dimensional candidates.
 
     Args:
-        query (Variable): A vector to query, whose size is
+        query (tensor): A vector to query, whose size is
             (query_dim,)
-        candidates (Variable): A n-dimensional tensor to be multiplied
+        candidates (tensor): A n-dimensional tensor to be multiplied
             by query, whose size is (d0, d1, ..., dn, query_dim)
 
     Returns:
@@ -220,9 +220,9 @@ def dot_nd(query, candidates):
 def convert_to_one_hot(indices, num_classes):
     """
     Args:
-        indices (Variable): A vector containing indices,
+        indices (tensor): A vector containing indices,
             whose size is (batch_size,).
-        num_classes (Variable): The number of classes, which would be
+        num_classes (tensor): The number of classes, which would be
             the second dimension of the resulting one-hot matrix.
 
     Returns:
@@ -231,8 +231,8 @@ def convert_to_one_hot(indices, num_classes):
 
     batch_size = indices.size(0)
     indices = indices.unsqueeze(1)
-    one_hot = Variable(indices.data.new(batch_size, num_classes).zero_()
-                       .scatter_(1, indices.data, 1))
+    one_hot = torch.Tensor(batch_size, num_classes).zero_().to(indices.device)\
+                .scatter_(1, indices.data, 1)
     return one_hot
 
 
@@ -280,21 +280,21 @@ def st_gumbel_softmax(logits, temperature=1.0, mask=None, use_weight=False, weig
     distribution via smooth Gumbel-Softmax distribution.
 
     Args:
-        logits (Variable): A un-normalized probability values,
+        logits (Tensor): A un-normalized probability values,
             which has the size (batch_size, num_classes) or (num_classes, )
         temperature (float): A temperature parameter. The higher
             the value is, the smoother the distribution is.
-        mask (Variable, optional): If given, it masks the softmax
+        mask (Tensor, optional): If given, it masks the softmax
             so that indices of '0' mask values are not selected.
             The size is (batch_size, num_classes).
-        weights (Variable, optional) : Must have the same size with mask
+        weights (Tensor, optional) : Must have the same size with mask
     Returns:
         y: The sampled output, which has the property explained above.
     """
 
     eps = 1e-20
     u = logits.data.new(*logits.size()).uniform_(0.001, 0.999)
-    gumbel_noise = Variable(-torch.log(-torch.log(u + eps) + eps))
+    gumbel_noise = -torch.log(-torch.log(u + eps) + eps)
     y = logits + gumbel_noise
     if use_weight:
         assert(weights is not None and mask is not None)
@@ -313,13 +313,10 @@ def st_gumbel_softmax(logits, temperature=1.0, mask=None, use_weight=False, weig
 
 def sequence_mask(sequence_length, max_length=None):
     if max_length is None:
-        max_length = sequence_length.data.max()
+        max_length = sequence_length.max()
     batch_size = sequence_length.size(0)
     seq_range = torch.arange(0, max_length).long()
-    seq_range_expand = seq_range.unsqueeze(0).expand(batch_size, max_length)
-    seq_range_expand = Variable(seq_range_expand)
-    if sequence_length.is_cuda:
-        seq_range_expand = seq_range_expand.cuda()
+    seq_range_expand = seq_range.unsqueeze(0).expand(batch_size, max_length).to(sequence_length.device)
     seq_length_expand = sequence_length.unsqueeze(1).expand_as(seq_range_expand)
     return seq_range_expand < seq_length_expand
 
@@ -330,11 +327,11 @@ def reverse_padded_sequence(inputs, lengths, batch_first=False):
     ``B x T x *`` if True. T is the length of the longest sequence (or larger),
     B is the batch size, and * is any number of dimensions (including 0).
     Arguments:
-        inputs (Variable): padded batch of variable length sequences.
+        inputs (Tensor): padded batch of variable length sequences.
         lengths (list[int]): list of sequence lengths
         batch_first (bool, optional): if True, inputs should be B x T x *.
     Returns:
-        A Variable with the same size as inputs, but with each sequence
+        A Tensor with the same size as inputs, but with each sequence
         reversed according to its length.
     """
 
@@ -347,12 +344,8 @@ def reverse_padded_sequence(inputs, lengths, batch_first=False):
     for i, length in enumerate(lengths):
         if length > 0:
             reversed_indices[i][:length] = reversed_indices[i][length-1::-1]
-    reversed_indices = (torch.LongTensor(reversed_indices).unsqueeze(2)
-                        .expand_as(inputs))
-    reversed_indices = Variable(reversed_indices)
-    if inputs.is_cuda:
-        device = inputs.get_device()
-        reversed_indices = reversed_indices.cuda(device)
+    reversed_indices = torch.LongTensor(reversed_indices).unsqueeze(2)\
+                        .expand_as(inputs).to(inputs.device)
     reversed_inputs = torch.gather(inputs, 1, reversed_indices)
     if not batch_first:
         reversed_inputs = reversed_inputs.transpose(0, 1)

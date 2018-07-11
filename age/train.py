@@ -22,9 +22,6 @@ from IPython import embed
 def train_iter(args, batch, model, params, criterion, optimizer):
     model.train(True)
     words, length, label = batch
-    length = wrap_with_variable(length, volatile=False, gpu=args.gpu)
-    words = wrap_with_variable(words, volatile=False, gpu=args.gpu)
-    label = wrap_with_variable(label, volatile=False, gpu=args.gpu)
     logits, supplements = model(words=words, length=length)
     label_pred = logits.max(1)[1]
     accuracy = torch.eq(label, label_pred).float().mean()
@@ -48,9 +45,6 @@ def train_rl_iter(args, batch, model, params, criterion, optimizer):
     model.train(True)
     sample_num = args.sample_num
     words, length, label = batch
-    length = wrap_with_variable(length, volatile=False, gpu=args.gpu)
-    words = wrap_with_variable(words, volatile=False, gpu=args.gpu)
-    label = wrap_with_variable(label, volatile=False, gpu=args.gpu)
     logits, supplements = model(words=words, length=length)
     label_pred = logits.max(1)[1]
     accuracy = torch.eq(label, label_pred).float().mean()
@@ -129,9 +123,6 @@ def train_rl_iter(args, batch, model, params, criterion, optimizer):
 def eval_iter(args, model, batch):
     model.train(False)
     words, length, label = batch
-    length = wrap_with_variable(length, volatile=False, gpu=args.gpu)
-    words = wrap_with_variable(words, volatile=False, gpu=args.gpu)
-    label = wrap_with_variable(label, volatile=False, gpu=args.gpu)
     logits, supplements = model(words=words, length=length)
     label_pred = logits.max(1)[1]
     num_correct = torch.eq(label, label_pred).long().sum()

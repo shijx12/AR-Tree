@@ -2,20 +2,20 @@ import pickle
 import numpy
 import torch
 import random
+import math
 
 class AGE2(object):
-    def __init__(self, datapath, batch_size=50):
-        self.batch_size = batch_size
-        self.datapath = datapath
+    def __init__(self, args):
+        self.batch_size = args.batch_size
         
-        data_file = open(self.datapath, 'rb')
+        data_file = open(args.data_path, 'rb')
         pickle.load(data_file)
         pickle.load(data_file)
         self.train_set, self.dev_set, self.test_set = pickle.load(data_file)
         self.weight = pickle.load(data_file).astype('float32')
         self.weight = torch.FloatTensor(self.weight)
 
-        self.word2embed = pickle.load(data_file)   # key: word, value: embedding
+        self.weight = pickle.load(data_file)   # key: word, value: embedding
         _word_to_id = pickle.load(data_file)     # key: word, value: number
         _id_to_word = pickle.load(data_file)     # key: number, value: word
         self._word_to_id = _word_to_id
@@ -23,7 +23,6 @@ class AGE2(object):
         self.word_to_id = lambda _: _word_to_id[_]
         self.id_to_word = lambda _: _id_to_word[_]
         self.id_to_tf = lambda _: 0
-        self.num_words = len(_word_to_id)
         data_file.close()
 
         self.train_size = len(self.train_set)
@@ -32,6 +31,11 @@ class AGE2(object):
         self.train_ptr = 0
         self.dev_ptr = 0
         self.test_ptr = 0
+        self.num_train_batches = math.ceil(self.train_size / self.batch_size)
+
+        args.num_classes = 5
+        args.num_words = len(_word_to_id)
+        args.vocab = self
 
     def wrap_numpy_to_longtensor(self, *args):
         res = []
@@ -40,8 +44,15 @@ class AGE2(object):
             res.append(arg)
         return res
 
+    def wrap_to_model_arg(self, words, length): # should match the kwargs of model.forward
+        return {
+                'words': words,
+                'length': length
+                }
+
 
     def train_minibatch_generator(self):
+        random.shuffle(self.train_set)
         while self.train_ptr <= self.train_size - self.batch_size:
             self.train_ptr += self.batch_size
             minibatch = self.train_set[self.train_ptr - self.batch_size : self.train_ptr]
@@ -53,13 +64,10 @@ class AGE2(object):
                 hypos[i, :len(h)] = h
                 length[i] = len(h)
                 truth[i] = t
-            hypos, length, truth = self.wrap_numpy_to_longtensor(hypos, length, truth)
-            
-            yield hypos, length, truth
-        else:
-            self.train_ptr = 0
-            random.shuffle(self.train_set)
-            raise StopIteration
+            words, length, label = self.wrap_numpy_to_longtensor(hypos, length, truth)
+            model_arg = self.wrap_to_model_arg(words, length) 
+            yield model_arg, label
+
 
 
     # NOTE: for dev and test, all data should be fetched regardless of batch_size!
@@ -76,12 +84,9 @@ class AGE2(object):
                 hypos[i, :len(h)] = h
                 length[i] = len(h)
                 truth[i] = t
-            hypos, length, truth = self.wrap_numpy_to_longtensor(hypos, length, truth)
-            
-            yield hypos, length, truth
-        else:
-            self.dev_ptr = 0
-            raise StopIteration
+            words, length, label = self.wrap_numpy_to_longtensor(hypos, length, truth)
+            model_arg = self.wrap_to_model_arg(words, length) 
+            yield model_arg, label
 
     def test_minibatch_generator(self, ):
         while self.test_ptr < self.test_size:
@@ -96,10 +101,7 @@ class AGE2(object):
                 hypos[i, :len(h)] = h
                 length[i] = len(h)
                 truth[i] = t
-            hypos, length, truth = self.wrap_numpy_to_longtensor(hypos, length, truth)
-            
-            yield hypos, length, truth
-        else:
-            self.test_ptr = 0
-            raise StopIteration
+            words, length, label = self.wrap_numpy_to_longtensor(hypos, length, truth)
+            model_arg = self.wrap_to_model_arg(words, length) 
+            yield model_arg, label
 

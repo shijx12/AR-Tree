@@ -1,43 +1,11 @@
-from torch.autograd import Variable
 import torch
 import numpy as np
-import conf
-from tensorboard import summary
 
-def add_scalar_summary(summary_writer, name, value, step):
-    value = unwrap_scalar_variable(value)
-    summ = summary.scalar(name=name, scalar=value)
-    summary_writer.add_summary(summary=summ, global_step=step)
-
-def add_histo_summary(summary_writer, name, value, step):
-    value = value.view(-1).data.cpu().numpy()
-    summ = summary.histogram(name=name, values=value)
-    summary_writer.add_summary(summary=summ, global_step=step)
-
-
-def wrap_with_variable(tensor, volatile, gpu):
-    if gpu > -1:
-        return Variable(tensor.cuda(gpu), volatile=volatile)
-    else:
-        return Variable(tensor, volatile=volatile)
-
-
-def unwrap_scalar_variable(var):
-    if isinstance(var, Variable):
-        return var.data[0]
-    else:
-        return var
-
-def unwrap_variable(var):
-    if isinstance(var, Variable):
-        return var.data
-    else:
-        return var
 
 def _parse_word_depth(length, select_masks):
     """
     Args:
-        length: (batch_size, ). Variable containing an IntTensor
+        length: (batch_size, ). IntTensor
             the sentence length of a batch
         select_masks: a list of length (max_len-2), i-th element is a Tensor of shape (batch_size, max_len-1-i)
             parse results from <BinaryTreeLSTM.select_composition>
@@ -64,8 +32,6 @@ def _parse_word_depth(length, select_masks):
                     chart[i-1][j+bias] = chart[i][j]+1
                 else:
                     chart[i-1][j+bias] = chart[i][j]
-            if conf.debug and bias != 1:
-                from IPython import embed; embed()
             assert bias==1, 'Wrong select_masks!'
         # from IPython import embed; embed()
         parsed_results.append(chart[0])
@@ -109,9 +75,6 @@ def parse_tree(vocab, words, length, select_masks):
                 parent = (f'({stack[-2][0]} {stack[-1][0]})', stack[-1][1]-1)
                 stack.pop(); stack.pop()
                 stack.append(parent)
-        if conf.debug and not (len(stack)==1 and stack[0][1]==0):
-            print('Wrong stack when parse tree')
-            from IPython import embed; embed()
         assert len(stack)==1 and stack[0][1]==0, 'Wrong final stack states!'
         trees.append(stack[0][0])
     return trees

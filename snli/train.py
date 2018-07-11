@@ -26,11 +26,6 @@ from IPython import embed
 
 def train_iter(args, batch, model, params, criterion, optimizer):
     model.train(True)
-    pre = wrap_with_variable(batch['pre'], volatile=False, gpu=args.gpu)
-    hyp = wrap_with_variable(batch['hyp'], volatile=False, gpu=args.gpu)
-    pre_length = wrap_with_variable(batch['pre_length'], volatile=False, gpu=args.gpu)
-    hyp_length = wrap_with_variable(batch['hyp_length'], volatile=False, gpu=args.gpu)
-    label = wrap_with_variable(batch['label'], volatile=False, gpu=args.gpu)
     logits, supplements = model(pre=pre, pre_length=pre_length, hyp=hyp, hyp_length=hyp_length)
     label_pred = logits.max(1)[1]
     accuracy = torch.eq(label, label_pred).float().mean()

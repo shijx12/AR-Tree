@@ -12,7 +12,7 @@ import conf
 class BinaryTreeLSTMLayer(nn.Module):
 
     def __init__(self, hidden_dim):
-        super(BinaryTreeLSTMLayer, self).__init__()
+        super().__init__()
         self.hidden_dim = hidden_dim
         self.comp_linear = nn.Linear(in_features=2 * hidden_dim,
                                      out_features=5 * hidden_dim)
@@ -48,7 +48,7 @@ class BinaryTreeLSTM(nn.Module):
         '''word_dim, hidden_dim, use_leaf_rnn, intra_attention,
         gumbel_temperature, bidirectional, weighted_by_interval_length, weighted_base,
         weighted_update '''
-        super(BinaryTreeLSTM, self).__init__()
+        super().__init__()
         hidden_dim = self.hidden_dim = kwargs['hidden_dim'] 
         self.use_leaf_rnn = kwargs['use_leaf_rnn'] 
         self.intra_attention = kwargs['intra_attention'] 
