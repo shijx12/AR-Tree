@@ -165,7 +165,7 @@ class STGumbel_AR_Tree(nn.Module):
             if isinstance(sentence_word, list):
                 sentence = sentence_word[i]
             elif isinstance(sentence_word, torch.Tensor):
-                sentence = list(map(self.vocab.id_to_word, sentence_word[i].tolist()))
+                sentence = list(map(lambda i: self.vocab.id_to_word[i], sentence_word[i].tolist()))
             assert type(sentence[0])==str
 
             if self.rank_input == 'w':

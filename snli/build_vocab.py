@@ -32,19 +32,16 @@ def save_vocab(word_tf, word_df, path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data-paths', required=True)
+    parser.add_argument('--data-path', required=True, help="training data")
     parser.add_argument('--lower', default=False, action='store_true')
     parser.add_argument('--out', required=True)
     args = parser.parse_args()
 
-    data_paths = args.data_paths.split(':')
-    data_paths = [p for p in data_paths if p.strip()]
     word_tf = Counter()
     word_df = Counter()
-    for data_path in data_paths:
-        _word_tf, _word_df = collect_words(path=data_path, lower=args.lower)
-        word_tf = word_tf + _word_tf
-        word_df = word_df + _word_df
+    _word_tf, _word_df = collect_words(path=args.data_path, lower=args.lower)
+    word_tf = word_tf + _word_tf
+    word_df = word_df + _word_df
     save_vocab(word_tf=word_tf, word_df=word_df, path=args.out)
 
 

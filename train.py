@@ -2,6 +2,9 @@ import argparse
 import logging
 import os
 import time
+from collections import defaultdict
+from tensorboardX import SummaryWriter
+from IPython import embed
 
 import torch
 from torch import nn, optim
@@ -11,13 +14,10 @@ from torch.nn.functional import softmax
 
 from model.SingleModel import SingleModel
 from model.PairModel import PairModel
-from utils.glove import load_glove
-from age.dataset import AGE2
-from sst.dataset import SST
+from age.dataLoader import AGE2
+from sst.dataLoader import SST
 from snli.dataLoader import SNLI
-from collections import defaultdict
-from tensorboardX import SummaryWriter
-from IPython import embed
+from evaluate import eval_iter
 
 
 def train_iter(args, batch, model, params, criterion, optimizer):
@@ -121,21 +121,11 @@ def train_rl_iter(args, batch, model, params, criterion, optimizer):
     return sv_loss, rl_loss, accuracy
 
 
-def eval_iter(batch, model):
-    model.train(False)
-    model_arg, label = batch
-    logits, supplements = model(**model_arg)
-    label_pred = logits.max(1)[1]
-    num_correct = torch.eq(label, label_pred).long().sum().item()
-    return num_correct, supplements 
-
-
-
-
 
 
 def train(args):
     device = torch.device('cuda' if args.cuda else 'cpu')
+    args.device = device
 
     ################################  data  ###################################
     if args.data_type == 'sst2':
@@ -146,11 +136,16 @@ def train(args):
         data = SST(args)
     elif args.data_type == 'age':
         data = AGE2(args)
+    elif args.data_type == 'snli':
+        data = SNLI(args)
 
     num_train_batches = data.num_train_batches # number of batches per epoch
     ################################  model  ###################################
-
-    model = SingleModel(**vars(args))
+    if args.data_type == 'snli':
+        Model = PairModel
+    else:
+        Model = SingleModel
+    model = Model(**vars(args))
     if args.glove:
         logging.info('Loading GloVe pretrained vectors...')
         model.word_embedding.weight.data.set_(data.weight)
@@ -176,14 +171,13 @@ def train(args):
     train_summary_writer = SummaryWriter(os.path.join(args.save_dir, 'log', 'train'))
     valid_summary_writer = SummaryWriter(os.path.join(args.save_dir, 'log', 'valid'))
 
-    num_train_batches = len(train_loader)
     logging.info(f'num_train_batches: {num_train_batches}')
     validate_every = num_train_batches // 10
     best_vaild_accuacy = 0
     iter_count = 0
     tic = time.time()
 
-    for epoch_num in range(args.max_epoch)
+    for epoch_num in range(args.max_epoch):
         for batch_iter, train_batch in enumerate(data.train_minibatch_generator()):
             progress = epoch_num + batch_iter / num_train_batches
             iter_count += 1
@@ -213,13 +207,13 @@ def train(args):
             ########################################################################################
             if (batch_iter + 1) % (num_train_batches // 100) == 0:
                 tac = (time.time() - tic) / 60
-                print(f'   {tac:.2f} minutes\tprogress: {progress:.2f}')
+                print(f'   {tac:.2f} minutes\tprogress: {progress:.2f}, loss: {train_loss.item():.4f}')
             if (batch_iter + 1) % validate_every == 0:
                 correct_sum = 0
                 for valid_batch in data.dev_minibatch_generator():
                     correct, supplements = eval_iter(valid_batch, model)
                     correct_sum += correct
-                valid_accuracy = correct_sum / len(valid_dataset) 
+                valid_accuracy = correct_sum / data.num_valid
                 scheduler.step(valid_accuracy)
                 valid_summary_writer.add_scalar('acc', valid_accuracy, iter_count)
                 logging.info(f'Epoch {progress:.2f}: '
@@ -232,7 +226,7 @@ def train(args):
                         correct_sum += correct
                         if 'tree' in supplements:
                             trees += supplements['tree']
-                    test_accuracy = correct_sum / len(test_dataset)
+                    test_accuracy = correct_sum / data.num_test
                     best_vaild_accuacy = valid_accuracy
                     model_filename = (f'model-{progress:.2f}'
                             f'-{valid_accuracy:.3f}'
@@ -247,29 +241,30 @@ def main():
     parser = argparse.ArgumentParser() 
     parser.add_argument('--save-dir', required=True)
     parser.add_argument('--data-type', required=True, choices=['sst2', 'sst5', 'age'])
-    parser.add_argument('--data-path', required=True, default='/data/share/stanfordSentimentTreebank/')
+    parser.add_argument('--data-path', required=True)
+    parser.add_argument('--model-type', required=True, choices=['Choi', 'RL-SA', 'tfidf', 'STG-SA', 'SSA'])
+
 
     parser.add_argument('--glove', default='glove.840B.300d')
     parser.add_argument('--cuda', default=True, action='store_true')
     parser.add_argument('--cell-type', default='TriPad', choices=['Nary', 'TriPad'])
-    parser.add_argument('--model-type', default='Choi', choices=['Choi', 'RL-SA', 'tfidf', 'STG-SA', 'SSA'])
     parser.add_argument('--sample-num', default=3, type=int, help='sample num')
+    parser.add_argument('--leaf-rnn-type', default='bilstm', choices=['no', 'bilstm'])
     parser.add_argument('--rank-input', default='h', choices=['w', 'h'], help='whether feed word embedding or hidden state of bilstm into score function')
-
-
     parser.add_argument('--rl_weight', default=0.1, type=float)
     parser.add_argument('--word-dim', default=300, type=int)
-    parser.add_argument('--hidden-dim', default=600, type=int, help='dimension of final sentence embedding')
-    parser.add_argument('--clf-hidden-dim', default=300, type=int)
-    parser.add_argument('--clf-num-layers', default=1, type=int)
-    parser.add_argument('--dropout', default=0.5, type=float)
-    parser.add_argument('--batch-size', default=32, type=int)
-    parser.add_argument('--max-epoch', default=20, type=int)
-    parser.add_argument('--lr', default=1, type=float)
-    parser.add_argument('--l2reg', default=1e-5, type=float)
-    parser.add_argument('--leaf-rnn-type', default='bilstm', choices=['no', 'bilstm'])
-    parser.add_argument('--optimizer', default='adadelta')
-    parser.add_argument('--fix-word-embedding', default=False, action='store_true')
+
+
+    parser.add_argument('--hidden-dim', type=int, help='dimension of final sentence embedding')
+    parser.add_argument('--clf-hidden-dim', type=int)
+    parser.add_argument('--clf-num-layers', type=int)
+    parser.add_argument('--dropout', type=float)
+    parser.add_argument('--batch-size', type=int)
+    parser.add_argument('--max-epoch', type=int)
+    parser.add_argument('--lr', type=float)
+    parser.add_argument('--l2reg', type=float)
+    parser.add_argument('--optimizer')
+    parser.add_argument('--fix-word-embedding', action='store_true')
     parser.add_argument('--use-batchnorm', action='store_true')
     parser.add_argument('--debug', action='store_true')
 

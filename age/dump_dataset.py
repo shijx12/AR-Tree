@@ -109,22 +109,8 @@ weight = numpy.concatenate(ordered_word_embedding, axis=0)
 
 print("dumping converted datasets...")
 save_file = open(save_path, 'wb')
-pickle.dump("dict: truth values and their corresponding class name\n"
-             "the whole dataset, in list of list of tuples: list of train/valid/test set -> "
-                "list of sentence pairs -> tuple with structure:"
-                "(review, truth rate), all entries in numbers\n"
-             "numpy.ndarray: a matrix with all referred words' embedding in its rows,"
-                "embeddings are ordered by their corresponding word numbers.\n"
-             "dict: the augmented GloVe word embedding. contains all possible tokens in SNLI."
-                "All initial GloVe entries are included.\n"
-             "dict w_referred: word to their corresponding number\n"
-             "inverse of w_referred, number to words\n",
-             save_file)
-pickle.dump(classname, save_file)
 pickle.dump(train_dev_test, save_file)
 pickle.dump(weight, save_file)
-fake_w2 = None; pickle.dump(fake_w2, save_file)
-# pickle.dump(w2, save_file)  # this is a huge dictionary, delete it if you don't need.
 pickle.dump(w_referred, save_file)
 pickle.dump(inv_w_referred, save_file)
 save_file.close()

@@ -34,8 +34,8 @@ class Classifier(nn.Module):
                 init.kaiming_normal_(layer.weight)
                 if layer.bias is not None:
                     init.constant_(layer.bias, val=0)
-        init.normal_(self.clf_linear.weight.data, std=0.01)
-        init.constant_(self.clf_linear.bias.data, val=0)
+        init.kaiming_normal_(self.clf_linear.weight)
+        init.constant_(self.clf_linear.bias, val=0)
 
     def forward(self, sentence):
         mlp_input = sentence
