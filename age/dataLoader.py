@@ -48,6 +48,7 @@ class AGE2(object):
 
 
     def train_minibatch_generator(self):
+        self.train_ptr = 0
         random.shuffle(self.train_set)
         while self.train_ptr <= self.train_size - self.batch_size:
             self.train_ptr += self.batch_size
@@ -67,7 +68,8 @@ class AGE2(object):
 
 
     # NOTE: for dev and test, all data should be fetched regardless of batch_size!
-    def dev_minibatch_generator(self, ):
+    def dev_minibatch_generator(self):
+        self.dev_ptr = 0
         while self.dev_ptr < self.dev_size:
             batch_size = min(self.batch_size, self.dev_size - self.dev_ptr)
             self.dev_ptr += batch_size
@@ -84,7 +86,8 @@ class AGE2(object):
             model_arg = self.wrap_to_model_arg(words, length) 
             yield model_arg, label
 
-    def test_minibatch_generator(self, ):
+    def test_minibatch_generator(self):
+        self.test_ptr = 0
         while self.test_ptr < self.test_size:
             batch_size = min(self.batch_size, self.test_size - self.test_ptr)
             self.test_ptr += batch_size

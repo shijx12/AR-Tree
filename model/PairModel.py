@@ -4,7 +4,7 @@ from torch.nn import init
 
 class Classifier(nn.Module):
 
-    def __init__(**kwargs):
+    def __init__(self, **kwargs):
         super().__init__()
         self.use_batchnorm = kwargs['use_batchnorm']
         input_dim = kwargs['hidden_dim'] # input of classifier is hidden sentence embedding 
@@ -57,7 +57,7 @@ class Classifier(nn.Module):
 
 class PairModel(nn.Module):
 
-    def __init__(self, typ, **kwargs):
+    def __init__(self, **kwargs):
         super().__init__()
         model_type = self.model_type = kwargs['model_type']
 
@@ -71,8 +71,8 @@ class PairModel(nn.Module):
             from model.RL_SA_Tree import RlSaTree
             Encoder = RlSaTree
         elif model_type == 'STG-SA':
-            from model.STGumbel_SA_Tree import STGumbelSaTree
-            Encoder = STGumbelSaTree
+            from model.STGumbel_AR_Tree import STGumbel_AR_Tree
+            Encoder = STGumbel_AR_Tree
         elif model_type == 'SSA':
             from model.Self_Seg_Att_Tree import SelfSegAttenTree
             Encoder = SelfSegAttenTree
@@ -85,7 +85,7 @@ class PairModel(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        init.normal(self.word_embedding.weight.data, mean=0, std=0.01)
+        init.normal_(self.word_embedding.weight.data, mean=0, std=0.01)
 
     def forward(self, pre, pre_length, hyp, hyp_length):
         pre_embeddings = self.word_embedding(pre)

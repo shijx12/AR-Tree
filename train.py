@@ -240,12 +240,13 @@ def train(args):
 def main():
     parser = argparse.ArgumentParser() 
     parser.add_argument('--save-dir', required=True)
-    parser.add_argument('--data-type', required=True, choices=['sst2', 'sst5', 'age'])
+    parser.add_argument('--data-type', required=True, choices=['sst2', 'sst5', 'age', 'snli'])
     parser.add_argument('--data-path', required=True)
     parser.add_argument('--model-type', required=True, choices=['Choi', 'RL-SA', 'tfidf', 'STG-SA', 'SSA'])
 
 
     parser.add_argument('--glove', default='glove.840B.300d')
+    parser.add_argument('--glove-path')
     parser.add_argument('--cuda', default=True, action='store_true')
     parser.add_argument('--cell-type', default='TriPad', choices=['Nary', 'TriPad'])
     parser.add_argument('--sample-num', default=3, type=int, help='sample num')
