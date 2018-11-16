@@ -1,12 +1,14 @@
-"""Basic or helper implementation."""
 import torch
 from torch import nn
 from torch.nn import functional, init, Parameter
 import numpy as np
 
-######################################################################
-# layers by Jiaxin
-#
+class Node():
+    def __init__(self, word, left=None, right=None):
+        self.word = word
+        self.left = left
+        self.right = right
+
 
 class NaryLSTMLayer(nn.Module): # N-ary Tree-LSTM in the paper of treelstm
     def __init__(self, hidden_dim):
@@ -50,7 +52,6 @@ class TriPadLSTMLayer(nn.Module): # used in my paper
         self.hidden_dim = hidden_dim
         self.comp_linear = nn.Linear(in_features=3 * hidden_dim,
                                     out_features=6 * hidden_dim)
-        self.zero = torch.zeros(1, hidden_dim)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -67,18 +68,17 @@ class TriPadLSTMLayer(nn.Module): # used in my paper
             h, c : The hidden and cell state of the composed parent
         """
         hm, cm = m
-        self.zero = self.zero.to(hm.device)
-        if l==None:
-            l = (self.zero, self.zero)
-        if r==None:
-            r = (self.zero, self.zero)
+        zero = torch.zeros(1, self.hidden_dim).to(hm.device)
+        if l is None:
+            l = (zero, zero)
+        if r is None:
+            r = (zero, zero)
         hr, cr = r
         hl, cl = l
         h_cat = torch.cat([hl, hm, hr], dim=1)
         comp_vector = self.comp_linear(h_cat)
         i, fl, fm, fr, u, o = torch.chunk(comp_vector, chunks=6, dim=1)
-        c = (cl*(fl + 1).sigmoid() + cm*(fm + 1).sigmoid() + cr*(fr + 1).sigmoid()
-            + u.tanh()*i.sigmoid())
+        c = cl*(fl+1).sigmoid() + cm*(fm+1).sigmoid() + cr*(fr+1).sigmoid() + u.tanh()*i.sigmoid()
         h = o.sigmoid() * c.tanh()
         return h, c 
 
@@ -150,8 +150,6 @@ class ForgetMoreLSTMCell(nn.Module):
         h = o.sigmoid() * c.tanh()
         return h, c
 
-
-##############################################################################
 
 
 
@@ -259,18 +257,14 @@ def weighted_softmax(logits, base, mask=None, weights_mask=None):
         probs = probs / probs.sum(1, keepdim=True)
     return probs
 
-def greedy_select(logits, mask=None, use_weight=False, weights=None, base=None):
-    if use_weight:
-        assert(weights is not None and mask is not None)
-        probs = weighted_softmax(logits=logits, base=base, mask=mask, weights_mask=weights)
-    else:
-        probs = masked_softmax(logits=logits, mask=mask)
+def greedy_select(logits, mask=None):
+    probs = masked_softmax(logits=logits, mask=mask)
     one_hot = convert_to_one_hot(indices=probs.max(1)[1],
                                  num_classes=logits.size(1))
     return one_hot
 
 
-def st_gumbel_softmax(logits, temperature=1.0, mask=None, use_weight=False, weights=None, base=None):
+def st_gumbel_softmax(logits, temperature=1.0, mask=None):
     """
     Return the result of Straight-Through Gumbel-Softmax Estimation.
     It approximates the discrete sampling via Gumbel-Softmax trick
@@ -296,11 +290,7 @@ def st_gumbel_softmax(logits, temperature=1.0, mask=None, use_weight=False, weig
     u = logits.data.new(*logits.size()).uniform_(0.001, 0.999)
     gumbel_noise = -torch.log(-torch.log(u + eps) + eps)
     y = logits + gumbel_noise
-    if use_weight:
-        assert(weights is not None and mask is not None)
-        y = weighted_softmax(logits=y / temperature, base=base, mask=mask, weights_mask=weights)
-    else:
-        y = masked_softmax(logits=y / temperature, mask=mask)
+    y = masked_softmax(logits=y / temperature, mask=mask)
     if logits.ndimension() == 1: # no batch dimension
         y_argmax = y.max(0)[1]
         y_hard = convert_to_one_hot(indices=y_argmax, num_classes=y.size(0)).float().squeeze()

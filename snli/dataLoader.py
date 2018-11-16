@@ -88,38 +88,42 @@ class SNLI(object):
             test_dataset = pickle.load(f)
 
         self.train_loader = DataLoader(dataset=train_dataset, batch_size=args.batch_size,
-                                  shuffle=True, num_workers=1,
+                                  shuffle=True, num_workers=0,
                                   collate_fn=train_dataset.collate,
                                   pin_memory=True)
         self.valid_loader = DataLoader(dataset=valid_dataset, batch_size=args.batch_size,
-                                  shuffle=False, num_workers=1,
+                                  shuffle=False, num_workers=0,
                                   collate_fn=valid_dataset.collate,
                                   pin_memory=True)
         self.test_loader = DataLoader(dataset=test_dataset, batch_size=args.batch_size,
-                                  shuffle=False, num_workers=1,
-                                  collate_fn=valid_dataset.collate,
+                                  shuffle=False, num_workers=0,
+                                  collate_fn=test_dataset.collate,
                                   pin_memory=True)
 
         self.vocab = train_dataset.vocab
         self.word_to_id = self.vocab['word_token_to_idx']
         self.id_to_word = self.vocab['word_idx_to_token']
-
         #### load glove
-        print("load glove from %s" % (args.glove_path))
-        glove = pickle.load(open(args.glove_path, 'rb'))
-        dim = len(glove['the'])
-        num_words = len(self.vocab['word_token_to_idx'])
-        self.weight = np.zeros((num_words, dim), dtype=np.float32)
-        for i in range(num_words):
-            w = self.id_to_word[i]
-            if w in glove:
-                self.weight[i] = glove[w]
+        if hasattr(args, 'glove_path'):
+            print("load glove from %s" % (args.glove_path))
+            glove = pickle.load(open(args.glove_path, 'rb'))
+            dim = len(glove['the'])
+            num_words = len(self.vocab['word_token_to_idx'])
+            self.weight = np.zeros((num_words, dim), dtype=np.float32)
+            for i in range(num_words):
+                w = self.id_to_word[i]
+                if w in glove:
+                    self.weight[i] = glove[w]
+            self.weight[1] = 0 # <pad>
+            self.weight = torch.FloatTensor(self.weight)
+        else:
+            self.weight = None
+            print("no glove")
 
         ####### required items
         self.num_train_batches = len(self.train_loader)
         self.num_valid = len(valid_dataset)
         self.num_test = len(test_dataset)
-        self.weight = torch.FloatTensor(self.weight)
         args.num_classes = 3
         args.num_words = len(self.vocab['word_token_to_idx'])
         args.vocab = self

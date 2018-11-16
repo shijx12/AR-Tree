@@ -35,11 +35,16 @@ def main():
     args = parser.parse_args()
 
     print("Build vocab...")
-    word_tf, _ = collect_words(os.path.join(args.data, 'snli_1.0_train.jsonl'), args.lower)
+    word_tf = Counter()
+    for f in ['snli_1.0_train.jsonl', 'snli_1.0_dev.jsonl', 'snli_1.0_test.jsonl']:
+        _word_tf, _ = collect_words(os.path.join(args.data, f), args.lower)
+        word_tf = word_tf + _word_tf
     word_wtoi = {'<unk>':0, '<pad>':1}
     word_tf = dict(Counter(word_tf).most_common(args.vocab_size))
     for w in word_tf:
         word_wtoi[w] = len(word_wtoi)
+    word_tf['<unk>'] = 5000000
+    word_tf['<pad>'] = 5000000 # just give a very large occurrence number
     label_wtoi = {'neutral': 0, 'entailment': 1, 'contradiction': 2}
 
     vocab = {

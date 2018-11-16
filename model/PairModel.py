@@ -19,8 +19,11 @@ class Classifier(nn.Module):
             layer_in_features = hidden_dim if i > 0 else 4 * input_dim
             linear_layer = nn.Linear(in_features=layer_in_features,
                                      out_features=hidden_dim)
-            mlp_layers.append(linear_layer)
-            mlp_layers.append(nn.ReLU())
+            relu_layer = nn.ReLU()
+            mlp_layer = nn.Sequential(linear_layer, relu_layer)
+            mlp_layers.append(mlp_layer)
+#            mlp_layers.append(linear_layer)
+#            mlp_layers.append(nn.ReLU())
         self.mlp = nn.Sequential(*mlp_layers)
         self.clf_linear = nn.Linear(in_features=hidden_dim,
                                     out_features=kwargs['num_classes'])
@@ -35,8 +38,8 @@ class Classifier(nn.Module):
                 init.kaiming_normal_(layer.weight)
                 if layer.bias is not None:
                     init.constant_(layer.bias, val=0)
-        init.normal_(self.clf_linear.weight.data, std=0.01)
-        init.constant_(self.clf_linear.bias.data, val=0)
+        init.uniform_(self.clf_linear.weight, -0.005, 0.005)
+        init.constant_(self.clf_linear.bias, val=0)
 
     def forward(self, pre, hyp):
         f1 = pre
@@ -64,18 +67,13 @@ class PairModel(nn.Module):
         if model_type == 'Choi':
             from model.Choi_Treelstm import BinaryTreeLSTM
             Encoder = BinaryTreeLSTM
-        elif model_type == 'tfidf-SA':
-            from model.tfidf_Tree import tfidfTree
-            Encoder = tfidfTree
-        elif model_type == 'RL-SA':
-            from model.RL_SA_Tree import RlSaTree
-            Encoder = RlSaTree
-        elif model_type == 'STG-SA':
+        elif model_type == 'RL':
+            from model.RL_AR_Tree import RL_AR_Tree
+            Encoder = RL_AR_Tree
+        elif model_type == 'STG':
             from model.STGumbel_AR_Tree import STGumbel_AR_Tree
             Encoder = STGumbel_AR_Tree
-        elif model_type == 'SSA':
-            from model.Self_Seg_Att_Tree import SelfSegAttenTree
-            Encoder = SelfSegAttenTree
+
 
         self.word_embedding = nn.Embedding(num_embeddings=kwargs['num_words'],
                                            embedding_dim=kwargs['word_dim'])
@@ -86,6 +84,8 @@ class PairModel(nn.Module):
 
     def reset_parameters(self):
         init.normal_(self.word_embedding.weight.data, mean=0, std=0.01)
+        self.encoder.reset_parameters()
+        self.classifier.reset_parameters()
 
     def forward(self, pre, pre_length, hyp, hyp_length):
         pre_embeddings = self.word_embedding(pre)
@@ -102,13 +102,13 @@ class PairModel(nn.Module):
             supplements['pre_select_masks'] = pre_select_masks
             supplements['hyp_select_masks'] = hyp_select_masks
         ############################################################################
-        elif self.model_type == 'tfidf-SA' or self.model_type == 'STG-SA':
+        elif self.model_type == 'STG':
             pre_h, _, pre_tree = self.encoder(sentence_embedding=pre_embeddings, sentence_word=pre, length=pre_length)
             hyp_h, _, hyp_tree = self.encoder(sentence_embedding=hyp_embeddings, sentence_word=hyp, length=hyp_length)
             logits = self.classifier(pre=pre_h, hyp=hyp_h)
             supplements = {'pre_tree': pre_tree, 'hyp_tree': hyp_tree}
         ############################################################################
-        elif self.model_type == 'RL-SA':
+        elif self.model_type == 'RL':
             pre_h, _, pre_tree, pre_samples = self.encoder(sentence_embedding=pre_embeddings, sentence_word=pre, length=pre_length)
             hyp_h, _, hyp_tree, hyp_samples = self.encoder(sentence_embedding=hyp_embeddings, sentence_word=hyp, length=hyp_length)
             logits = self.classifier(pre=pre_h, hyp=hyp_h)

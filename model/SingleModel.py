@@ -34,7 +34,7 @@ class Classifier(nn.Module):
                 init.kaiming_normal_(layer.weight)
                 if layer.bias is not None:
                     init.constant_(layer.bias, val=0)
-        init.kaiming_normal_(self.clf_linear.weight)
+        init.uniform_(self.clf_linear.weight, -0.002, 0.002)
         init.constant_(self.clf_linear.bias, val=0)
 
     def forward(self, sentence):
@@ -59,28 +59,20 @@ class SingleModel(nn.Module):
         if model_type == 'Choi':
             from model.Choi_Treelstm import BinaryTreeLSTM
             Encoder = BinaryTreeLSTM
-        elif model_type == 'tfidf-SA':
-            from model.tfidf_Tree import tfidfTree
-            Encoder = tfidfTree
-        elif model_type == 'RL-SA':
-            from model.RL_SA_Tree import RlSaTree
-            Encoder = RlSaTree
-        elif model_type == 'STG-SA':
+        elif model_type == 'RL':
+            from model.RL_AR_Tree import RL_AR_Tree
+            Encoder = RL_AR_Tree
+        elif model_type == 'STG':
             from model.STGumbel_AR_Tree import STGumbel_AR_Tree
             Encoder = STGumbel_AR_Tree
-        elif model_type == 'SSA':
-            from model.Self_Seg_Att_Tree import SelfSegAttenTree
-            Encoder = SelfSegAttenTree
 
         self.word_embedding = nn.Embedding(num_embeddings=kwargs['num_words'],
                                            embedding_dim=kwargs['word_dim'])
         self.encoder = Encoder(**kwargs)
         self.classifier = Classifier(**kwargs)
         self.dropout = nn.Dropout(kwargs['dropout'])
-        self.reset_parameters()
-
-    def reset_parameters(self):
         init.normal_(self.word_embedding.weight, mean=0, std=0.01)
+        self.classifier.reset_parameters()
 
     def forward(self, words, length):
         words_embed = self.word_embedding(words)
@@ -92,12 +84,12 @@ class SingleModel(nn.Module):
             logits = self.classifier(h)
             supplements = {'select_masks': select_masks}
         ############################################################################
-        elif self.model_type == 'tfidf-SA' or self.model_type == 'STG-SA' or self.model_type == 'SSA':
+        elif self.model_type == 'STG':
             h, _, tree = self.encoder(words_embed, words, length)
             logits = self.classifier(h)
             supplements = {'tree': tree}
         ############################################################################
-        elif self.model_type == 'RL-SA':
+        elif self.model_type == 'RL':
             h, _, tree, samples = self.encoder(words_embed, words, length)
             logits = self.classifier(h)
             supplements = {'tree': tree}

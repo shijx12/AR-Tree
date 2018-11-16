@@ -5,8 +5,7 @@ import numpy
 import pickle
 import numpy as np
 import nltk
-
-import pdb
+import argparse
 
 
 ###################################################
@@ -26,11 +25,15 @@ import pdb
 ###################################################
 #                                   120739
 #                                    43256    88984
+parser = argparse.ArgumentParser() 
+parser.add_argument('--glove-path', required=True, help='840B.300d.txt file')
+parser.add_argument('--data-dir', required=True)
+parser.add_argument('--save-path', required=True)
+args = parser.parse_args()
 
-glove_path = '/data/share/glove.840B/glove.840B.300d.txt'
-data_dir = '/data/sjx/dataset/self-attentive-age2/'
-save_path = './data/age2.pickle'
-
+glove_path = args.glove_path
+data_dir = args.data_dir
+save_path = args.save_path
 
 
 print("loading GloVe...")

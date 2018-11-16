@@ -19,9 +19,6 @@ class SST(object):
                 datasets=dataset_splits, batch_size=args.batch_size, device=args.device, sort_within_batch=True)
 
         text_field.vocab.id_to_word = text_field.vocab.itos
-        text_field.vocab.id_to_df = text_field.freqs # TODO estimate
-
-
         num_classes = len(label_field.vocab)
         print(f'Number of classes: {num_classes}')
         ####### required items
