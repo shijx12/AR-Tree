@@ -2,7 +2,7 @@
 This repository is the pytorch implementation of paper
 
 [Learning to Embed Sentences Using Attentive Recursive Trees](https://arxiv.org/abs/1811.02338).
-> Jiaxin Shi, Lei Hou, Juanzi Li, [Zhiyuan Liu](http://nlp.csai.tsinghua.edu.cn/~lzy/index.html), [Hanwang Zhang](http://www.ntu.edu.sg/home/hanwangzhang/#aboutme).
+> [Jiaxin Shi](https://shijx12.github.io), Lei Hou, Juanzi Li, [Zhiyuan Liu](http://nlp.csai.tsinghua.edu.cn/~lzy/index.html), [Hanwang Zhang](http://www.ntu.edu.sg/home/hanwangzhang/#aboutme).
 
 In this paper, we propose an Attentive Recursive Tree model (AR-Tree), where the words are dynamically located according to their importance in the task. Specifically, we construct the latent tree for a sentence in a proposed important-first strategy, and place more attentive words nearer to the root; thus, AR-Tree can inherently emphasize important words during the bottom-up composition of the sentence embedding.
 If you find this code useful in your research, please cite
